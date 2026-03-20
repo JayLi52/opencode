@@ -89,7 +89,8 @@ export class OpencodeAcpBridge {
       cwd: this.opts.cwd,
       stdio: ["pipe", "pipe", "pipe"],
       env: { ...process.env },
-      shell: false,
+      // macOS 上需要使用 shell 来在 PATH 中查找命令
+      shell: true,
     }
 
     console.log("[acp-bridge] spawning:", spawnCommand, spawnArgs, "cwd:", options.cwd)

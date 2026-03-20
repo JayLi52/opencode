@@ -81,12 +81,14 @@
       "dependencies": {
         "@agentclientprotocol/sdk": "^0.16.1",
         "@hono/node-server": "^1.19.11",
+        "cross-spawn": "7.0.6",
         "hono": "catalog:",
         "tsx": "^4.21.0",
         "ulid": "catalog:",
       },
       "devDependencies": {
         "@types/bun": "catalog:",
+        "@types/cross-spawn": "6.0.6",
         "@types/node": "catalog:",
         "typescript": "catalog:",
       },
