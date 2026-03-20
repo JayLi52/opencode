@@ -1,8 +1,5 @@
 FROM node:20-slim
 
-# 安装全局依赖
-RUN npm install -g opencode-ai @qwen-code/qwen-code@latest
-
 WORKDIR /app
 
 # 复制 bridge 包

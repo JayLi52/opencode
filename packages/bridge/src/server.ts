@@ -442,6 +442,10 @@ app.post("/session", async (c) => {
     agent: body.agent ?? "coder",
   })
   sessionDirectory.set(session.id, activeDirectory)
+  
+  // 提前初始化 bridge 实例，确保 session 创建时就准备好
+  await getOrCreateBridge(session.id, activeDirectory)
+  
   const sessionData = makeSessionInfo(session)
   // 前端期望 session.updated 的 properties 是 { info: Session }
   broadcast(activeDirectory, "session.updated", { info: sessionData })
@@ -455,6 +459,10 @@ app.get("/session/:id", (c) => {
     session = store.createSessionWithId(id, { directory: activeDirectory })
     sessionDirectory.set(id, activeDirectory)
   }
+  
+  // 确保 bridge 已初始化（如果还没创建），不阻塞响应
+  getOrCreateBridge(id, activeDirectory).catch(console.error)
+  
   return c.json(makeSessionInfo(session))
 })
 
@@ -560,7 +568,11 @@ app.post("/session/:id/prompt_async", async (c) => {
 
   ;(async () => {
     try {
-      const bridge = await getOrCreateBridge(sessionID, sessionDir)
+      // Bridge 已在 session 创建时初始化，这里直接获取
+      const bridge = bridges.get(sessionDir)
+      if (!bridge) {
+        throw new Error(`Bridge not found for directory: ${sessionDir}`)
+      }
       await bridge.prompt(text)
       const msg = store.getCurrentAssistantMsg(sessionID)
       if (msg) {

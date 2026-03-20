@@ -33,6 +33,7 @@ export interface BridgeOptions {
   engine?: EngineType
   opencodePath?: string
   cwd: string
+  wsUrl?: string
 }
 
 export type SessionUpdateHandler = (update: SessionNotification) => void
@@ -49,6 +50,7 @@ export class OpencodeAcpBridge {
   private child: ChildProcess | null = null
   private connection: ClientSideConnection | null = null
   private sessionId: string | null = null
+  private ws: WebSocket | null = null
 
   // 可注入的权限处理器，默认自动批准
   public onPermission: PermissionHandler = async (params) => {
@@ -72,15 +74,118 @@ export class OpencodeAcpBridge {
     if (this.child) this.stop()
 
     const engine = this.opts.engine ?? "opencode"
+    
+    // 如果配置了 WebSocket URL，则使用 WebSocket 连接，否则使用子进程方式
+    const wsUrl = this.opts.wsUrl ?? "ws://localhost:4001/ws"
+    await this.startWebSocketConnection(wsUrl)
+
+    console.log("[acp-bridge] initializing ACP connection...")
+    await this.connection!.initialize({
+      protocolVersion: PROTOCOL_VERSION,
+      clientCapabilities: {
+        fs: { readTextFile: false, writeTextFile: false },
+      },
+    })
+    console.log("[acp-bridge] ACP initialized OK")
+  }
+
+  private async startWebSocketConnection(url: string): Promise<void> {
+    console.log("[acp-bridge] connecting to WebSocket:", url)
+
+    return new Promise((resolve, reject) => {
+      this.ws = new WebSocket(url)
+
+      this.ws.onopen = () => {
+        console.log("[acp-bridge] WebSocket connection established")
+        
+        const encoder = new TextEncoder()
+        const decoder = new TextDecoder()
+
+        // 创建 ReadableStream 接收 WebSocket 消息
+        const stdout = new ReadableStream<Uint8Array>({
+          start: (controller) => {
+            this.ws!.onmessage = (event) => {
+              try {
+                const data = typeof event.data === "string" ? event.data : decoder.decode(event.data)
+                controller.enqueue(encoder.encode(data + "\n"))
+              } catch (err) {
+                controller.error(err)
+              }
+            }
+            this.ws!.onclose = () => {
+              controller.close()
+            }
+            this.ws!.onerror = (err) => {
+              controller.error(new Error("WebSocket error"))
+            }
+          },
+        })
+
+        // 创建 WritableStream 发送数据到 WebSocket
+        let isClosed = false
+        const stdin = new WritableStream({
+          write: (chunk) => {
+            if (isClosed || !this.ws) return
+            const data = decoder.decode(chunk)
+            this.ws.send(data)
+          },
+          close: () => {
+            isClosed = true
+            this.ws?.close()
+          },
+        })
+
+        const stream = ndJsonStream(stdin, stdout)
+
+        const self = this
+        this.connection = new ClientSideConnection(
+          (_agent: Agent): Client => ({
+            async sessionUpdate(params: SessionNotification): Promise<void> {
+              self.onUpdate(params)
+            },
+
+            async requestPermission(params) {
+              return self.onPermission(params as any)
+            },
+
+            readTextFile: (() => {
+              throw new RequestError(-32600, "FS.readTextFile not implemented")
+            }) as Client["readTextFile"],
+
+            writeTextFile: (() => {
+              throw new RequestError(-32600, "FS.writeTextFile not implemented")
+            }) as Client["writeTextFile"],
+
+            extNotification: (async () => {}) as Client["extNotification"],
+          }),
+          stream,
+        )
+
+        resolve()
+      }
+
+      this.ws.onerror = (err) => {
+        console.error("[acp-bridge] WebSocket error:", err)
+        reject(err)
+      }
+
+      this.ws.onclose = (event) => {
+        console.log("[acp-bridge] WebSocket connection closed", {
+          code: event.code,
+          reason: event.reason,
+        })
+      }
+    })
+  }
+
+  private async spawnChildProcess(_engine: string): Promise<void> {
     let spawnCommand: string
     let spawnArgs: string[]
 
-    if (engine === "qwen-code") {
+    if (_engine === "qwen-code") {
       spawnCommand = this.opts.opencodePath ?? "qwen"
       spawnArgs = ["--acp"]
     } else {
-      // opencode 是 Node.js 脚本，必须用 node 显式执行
-      // const opencodeScript = this.opts.opencodePath ?? "opencode"
       spawnCommand = "opencode"
       spawnArgs = ["acp"]
     }
@@ -89,7 +194,6 @@ export class OpencodeAcpBridge {
       cwd: this.opts.cwd,
       stdio: ["pipe", "pipe", "pipe"],
       env: { ...process.env },
-      // macOS 上需要使用 shell 来在 PATH 中查找命令
       shell: true,
     }
 
@@ -140,15 +244,6 @@ export class OpencodeAcpBridge {
       }),
       stream,
     )
-
-    console.log("[acp-bridge] initializing ACP connection...")
-    await this.connection.initialize({
-      protocolVersion: PROTOCOL_VERSION,
-      clientCapabilities: {
-        fs: { readTextFile: false, writeTextFile: false },
-      },
-    })
-    console.log("[acp-bridge] ACP initialized OK")
   }
 
   private ensure(): ClientSideConnection {
@@ -187,6 +282,12 @@ export class OpencodeAcpBridge {
   stop() {
     this.connection = null
     this.sessionId = null
+    
+    if (this.ws) {
+      this.ws.close()
+      this.ws = null
+    }
+    
     if (this.child) {
       this.child.kill()
       this.child = null
