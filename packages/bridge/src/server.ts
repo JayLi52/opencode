@@ -108,7 +108,7 @@ async function getOrCreateBridge(sessionID: string, directory: string): Promise<
       engine: currentEngine, 
       opencodePath: ACP_PATH, 
       cwd: directory,
-      streams: { stdin: clientStream, stdout: serverStream },
+      // streams: { stdin: clientStream, stdout: serverStream },
     },
     (update) => {
       // 回调时用 bridgeSessionMap 获取当前活跃的 sessionID

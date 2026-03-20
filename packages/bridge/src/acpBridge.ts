@@ -82,7 +82,7 @@ export class OpencodeAcpBridge {
     } else if (this.opts.wsUrl) {
       await this.startWebSocketConnection(this.opts.wsUrl)
     } else {
-      const engine = this.opts.engine ?? "opencode"
+      const engine = this.opts.engine ?? "qwen-code"
       await this.spawnChildProcess(engine)
     }
 
@@ -208,7 +208,7 @@ export class OpencodeAcpBridge {
       cwd: this.opts.cwd,
       stdio: ["pipe", "pipe", "pipe"],
       env: { ...process.env },
-      shell: true,
+      shell: "/bin/zsh", // 显式指定 macOS 默认 shell
     }
 
     console.log("[acp-bridge] spawning:", spawnCommand, spawnArgs, "cwd:", options.cwd)
