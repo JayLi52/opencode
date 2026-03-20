@@ -89,8 +89,27 @@ async function getOrCreateBridge(sessionID: string, directory: string): Promise<
   // 记录 session → directory 映射
   bridgeSessionMap.set(directory, sessionID)
 
+  // 创建 streams 用于 ACP 协议透传
+  const clientStream = new WritableStream({
+    write: (chunk) => {
+      console.log("[bridge] → ACP:", new TextDecoder().decode(chunk).trim())
+    },
+  })
+
+  let serverController = null
+  const serverStream = new ReadableStream({
+    start: (controller) => {
+      serverController = controller
+    },
+  })
+
   const bridge = new OpencodeAcpBridge(
-    { engine: currentEngine, opencodePath: ACP_PATH, cwd: directory },
+    { 
+      engine: currentEngine, 
+      opencodePath: ACP_PATH, 
+      cwd: directory,
+      streams: { stdin: clientStream, stdout: serverStream },
+    },
     (update) => {
       // 回调时用 bridgeSessionMap 获取当前活跃的 sessionID
       const currentSessionID = bridgeSessionMap.get(directory) ?? sessionID
@@ -98,7 +117,7 @@ async function getOrCreateBridge(sessionID: string, directory: string): Promise<
     },
   )
 
-  bridge.onPermission = (params) => {
+    bridge.onPermission = (params) => {
     const currentSessionID = bridgeSessionMap.get(directory) ?? sessionID
     return handleAcpPermission(currentSessionID, directory, params as any)
   }

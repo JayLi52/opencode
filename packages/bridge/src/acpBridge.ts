@@ -34,6 +34,7 @@ export interface BridgeOptions {
   opencodePath?: string
   cwd: string
   wsUrl?: string
+  streams?: { stdin: WritableStream; stdout: ReadableStream<Uint8Array> }
 }
 
 export type SessionUpdateHandler = (update: SessionNotification) => void
@@ -73,20 +74,56 @@ export class OpencodeAcpBridge {
   async start(): Promise<void> {
     if (this.child) this.stop()
 
-    const engine = this.opts.engine ?? "opencode"
-    
-    // 如果配置了 WebSocket URL，则使用 WebSocket 连接，否则使用子进程方式
-    const wsUrl = this.opts.wsUrl ?? "ws://localhost:4001/ws"
-    await this.startWebSocketConnection(wsUrl)
-
     console.log("[acp-bridge] initializing ACP connection...")
-    await this.connection!.initialize({
-      protocolVersion: PROTOCOL_VERSION,
-      clientCapabilities: {
-        fs: { readTextFile: false, writeTextFile: false },
-      },
-    })
+
+    if (this.opts.streams) {
+      const stream = ndJsonStream(this.opts.streams.stdin, this.opts.streams.stdout)
+      this.setupConnection(stream)
+    } else if (this.opts.wsUrl) {
+      await this.startWebSocketConnection(this.opts.wsUrl)
+    } else {
+      const engine = this.opts.engine ?? "opencode"
+      await this.spawnChildProcess(engine)
+    }
+
+    try {
+      await this.connection!.initialize({
+        protocolVersion: PROTOCOL_VERSION,
+        clientCapabilities: {
+          fs: { readTextFile: false, writeTextFile: false },
+        },
+      })
+    } catch (error) {
+      console.error("[acp-bridge] ACP initialization failed:", error)
+      throw error
+    }
     console.log("[acp-bridge] ACP initialized OK")
+  }
+
+  private setupConnection(stream: any): void {
+    const self = this
+    this.connection = new ClientSideConnection(
+      (_agent: Agent): Client => ({
+        async sessionUpdate(params: SessionNotification): Promise<void> {
+          self.onUpdate(params)
+        },
+
+        async requestPermission(params) {
+          return self.onPermission(params as any)
+        },
+
+        readTextFile: (() => {
+          throw new RequestError(-32600, "FS.readTextFile not implemented")
+        }) as Client["readTextFile"],
+
+        writeTextFile: (() => {
+          throw new RequestError(-32600, "FS.writeTextFile not implemented")
+        }) as Client["writeTextFile"],
+
+        extNotification: (async () => {}) as Client["extNotification"],
+      }),
+      stream,
+    )
   }
 
   private async startWebSocketConnection(url: string): Promise<void> {
@@ -136,30 +173,7 @@ export class OpencodeAcpBridge {
         })
 
         const stream = ndJsonStream(stdin, stdout)
-
-        const self = this
-        this.connection = new ClientSideConnection(
-          (_agent: Agent): Client => ({
-            async sessionUpdate(params: SessionNotification): Promise<void> {
-              self.onUpdate(params)
-            },
-
-            async requestPermission(params) {
-              return self.onPermission(params as any)
-            },
-
-            readTextFile: (() => {
-              throw new RequestError(-32600, "FS.readTextFile not implemented")
-            }) as Client["readTextFile"],
-
-            writeTextFile: (() => {
-              throw new RequestError(-32600, "FS.writeTextFile not implemented")
-            }) as Client["writeTextFile"],
-
-            extNotification: (async () => {}) as Client["extNotification"],
-          }),
-          stream,
-        )
+        this.setupConnection(stream)
 
         resolve()
       }
@@ -221,29 +235,7 @@ export class OpencodeAcpBridge {
     const stdin = Writable.toWeb(this.child.stdin!) as WritableStream
     const stream = ndJsonStream(stdin, stdout)
 
-    const self = this
-    this.connection = new ClientSideConnection(
-      (_agent: Agent): Client => ({
-        async sessionUpdate(params: SessionNotification): Promise<void> {
-          self.onUpdate(params)
-        },
-
-        async requestPermission(params) {
-          return self.onPermission(params as any)
-        },
-
-        readTextFile: (() => {
-          throw new RequestError(-32600, "FS.readTextFile not implemented")
-        }) as Client["readTextFile"],
-
-        writeTextFile: (() => {
-          throw new RequestError(-32600, "FS.writeTextFile not implemented")
-        }) as Client["writeTextFile"],
-
-        extNotification: (async () => {}) as Client["extNotification"],
-      }),
-      stream,
-    )
+    this.setupConnection(stream)
   }
 
   private ensure(): ClientSideConnection {

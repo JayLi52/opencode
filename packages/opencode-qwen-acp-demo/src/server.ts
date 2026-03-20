@@ -9,82 +9,62 @@ const app = express()
 const server = http.createServer(app)
 const wss = new WebSocketServer({ server, path: "/ws" })
 
-// 静态前端（很简单的 HTML/JS）
 app.use(express.static(path.join(__dirname, "..", "public")))
-
-type ClientMsg =
-  | { type: "init"; cliEntryPath: string; cwd?: string }
-  | { type: "prompt"; text: string }
-  | { type: "cancel" }
-
-type ServerMsg =
-  | { type: "ready" }
-  | { type: "error"; message: string }
-  | { type: "sessionUpdate"; payload: SessionNotification }
-  | { type: "promptResult"; stopReason?: string | null }
 
 wss.on("connection", (socket: WebSocket) => {
   let bridge: QwenAcpBridge | null = null
 
-  const send = (msg: ServerMsg) => {
-    socket.send(JSON.stringify(msg))
-  }
+  // 创建一个 WritableStream 用于发送数据到客户端
+  const clientStream = new WritableStream({
+    write: (chunk) => {
+      const data = new TextDecoder().decode(chunk)
+      socket.send(data)
+    },
+  })
 
-  socket.on("message", async (data: WebSocket.RawData) => {
-    try {
-      const msg = JSON.parse(String(data)) as ClientMsg
-      console.log("Received message:", msg)
+  // 创建一个 ReadableStream 用于接收客户端数据
+  let controller: ReadableStreamDefaultController<Uint8Array> | null = null
+  const serverStream = new ReadableStream<Uint8Array>({
+    start: (c) => {
+      controller = c
+    },
+  })
 
-      if (msg.method === "initialize") {
-        if (bridge) bridge.stop()
-        const cwd = msg.cwd ?? process.cwd()
-        bridge = new QwenAcpBridge(
-          {
-            cliEntryPath: '/Users/terry/work/ai-workspace/qwen-code/dist/cli.js',
-            cwd,
-          },
-          (update: SessionNotification) => {
-            send({ type: "sessionUpdate", payload: update })
-          },
-        )
-        await bridge.start()
-        
-        // await bridge.newSession()
-        // send({ type: "ready" })
-        return
-      }
-
-      if (!bridge) {
-        send({ type: "error", message: "Bridge not initialized. Send init first." })
-        return
-      }
-
-      switch (msg.type) {
-        case "prompt": {
-          const res = await bridge.prompt(msg.text)
-          send({ type: "promptResult", stopReason: res.stopReason ?? null })
-          break
-        }
-        case "cancel": {
-          await bridge.cancel()
-          break
-        }
-      }
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
-      send({ type: "error", message })
-    }
+  socket.on("message", (data: WebSocket.RawData) => {
+    const text = typeof data === "string" ? data : data.toString()
+    const encoder = new TextEncoder()
+    controller?.enqueue(encoder.encode(text + "\n"))
   })
 
   socket.on("close", () => {
+    controller?.close()
     if (bridge) bridge.stop()
+  })
+
+  socket.on("error", (err) => {
+    console.error("[ws] error:", err)
+    controller?.error(err)
+  })
+
+  // 初始化 bridge，传入 streams 而不是 wsUrl
+  bridge = new QwenAcpBridge(
+    {
+      cwd: process.cwd(),
+      streams: { stdin: clientStream, stdout: serverStream },
+    },
+    (update: SessionNotification) => {
+      console.log("[bridge] session update:", update)
+    },
+  )
+
+  bridge.start().catch((err) => {
+    console.error("[bridge] start failed:", err)
+    socket.send(JSON.stringify({ type: "error", message: err.message }))
   })
 })
 
 const PORT = Number(process.env.PORT ?? "4001")
 
 server.listen(PORT, () => {
-  // eslint-disable-next-line no-console
   console.log(`ACP demo server listening on http://localhost:${PORT}`)
 })
-
