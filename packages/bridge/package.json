@@ -4,7 +4,10 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "start": "tsx src/index.ts"
+    "start": "tsx src/index.ts",
+    "test": "echo 'do not run tests from root' && exit 1",
+    "build:bridge": "bun scripts/build-bridge-acr.ts",
+    "build:bridge:push": "bun scripts/build-bridge-acr.ts --push"
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "^0.16.1",
