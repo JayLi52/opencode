@@ -1,0 +1,30 @@
+{
+  "name": "opencode-qwen-acp-demo",
+  "version": "1.0.0",
+  "description": "Minimal OpenCode-style web frontend + Qwen-Code agent over ACP demo",
+  "main": "dist/server.js",
+  "scripts": {
+    "build": "tsc",
+    "dev": "ts-node-dev --respawn --transpile-only src/server.ts"
+  },
+  "keywords": [
+    "acp",
+    "qwen-code",
+    "opencode",
+    "agent"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@agentclientprotocol/sdk": "^0.16.1",
+    "ws": "^8.19.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/node": "^25.4.0",
+    "@types/ws": "^8.18.1",
+    "express": "^5.2.1",
+    "ts-node-dev": "^2.0.0",
+    "typescript": "^5.9.3"
+  }
+}

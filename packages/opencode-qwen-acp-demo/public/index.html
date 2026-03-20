@@ -1,0 +1,320 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>OpenCode + Qwen-Code ACP Demo</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+      body {
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+        margin: 0;
+        padding: 0;
+        background: #050816;
+        color: #e5e7eb;
+        display: flex;
+        flex-direction: column;
+        min-height: 100vh;
+      }
+      header {
+        padding: 12px 20px;
+        border-bottom: 1px solid rgba(148, 163, 184, 0.4);
+        background: linear-gradient(to right, #020617, #0b1120);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+      }
+      header h1 {
+        margin: 0;
+        font-size: 16px;
+        letter-spacing: 0.02em;
+      }
+      header span {
+        font-size: 12px;
+        color: #9ca3af;
+      }
+      main {
+        flex: 1;
+        display: flex;
+        padding: 16px;
+        gap: 16px;
+      }
+      .sidebar {
+        width: 260px;
+        background: rgba(15, 23, 42, 0.9);
+        border-radius: 12px;
+        padding: 12px;
+        border: 1px solid rgba(148, 163, 184, 0.4);
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+      .sidebar label {
+        display: flex;
+        flex-direction: column;
+        font-size: 12px;
+        color: #9ca3af;
+        gap: 4px;
+      }
+      .sidebar input {
+        padding: 6px 8px;
+        border-radius: 8px;
+        border: 1px solid rgba(148, 163, 184, 0.6);
+        background: #020617;
+        color: #e5e7eb;
+        font-size: 12px;
+      }
+      .sidebar button {
+        padding: 8px 10px;
+        border-radius: 999px;
+        border: none;
+        cursor: pointer;
+        font-size: 12px;
+        font-weight: 500;
+        color: #e5e7eb;
+        background: linear-gradient(135deg, #4f46e5, #22c55e);
+      }
+      .sidebar button[disabled] {
+        opacity: 0.5;
+        cursor: default;
+      }
+      .status {
+        font-size: 12px;
+        color: #9ca3af;
+      }
+      .status span {
+        font-weight: 500;
+      }
+      .chat {
+        flex: 1;
+        background: radial-gradient(circle at top left, rgba(56, 189, 248, 0.12), transparent 55%),
+          radial-gradient(circle at top right, rgba(185, 105, 255, 0.14), transparent 55%), #020617;
+        border-radius: 12px;
+        border: 1px solid rgba(148, 163, 184, 0.4);
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+      }
+      .timeline {
+        flex: 1;
+        padding: 12px 16px 16px;
+        overflow-y: auto;
+        font-size: 13px;
+      }
+      .bubble {
+        max-width: 80%;
+        padding: 8px 10px;
+        border-radius: 14px;
+        margin-bottom: 6px;
+        line-height: 1.45;
+        white-space: pre-wrap;
+      }
+      .bubble.user {
+        margin-left: auto;
+        background: linear-gradient(135deg, #4f46e5, #22c55e);
+      }
+      .bubble.agent {
+        margin-right: auto;
+        background: rgba(15, 23, 42, 0.9);
+        border: 1px solid rgba(148, 163, 184, 0.5);
+      }
+      .bubble.system {
+        margin: 0 auto;
+        background: transparent;
+        color: #9ca3af;
+        font-size: 11px;
+      }
+      .composer {
+        border-top: 1px solid rgba(148, 163, 184, 0.4);
+        padding: 10px 12px;
+        display: flex;
+        gap: 8px;
+        background: linear-gradient(to top, rgba(15, 23, 42, 0.95), rgba(15, 23, 42, 0.8));
+      }
+      .composer textarea {
+        flex: 1;
+        resize: none;
+        border-radius: 10px;
+        border: 1px solid rgba(148, 163, 184, 0.7);
+        background: #020617;
+        color: #e5e7eb;
+        padding: 8px 10px;
+        font-size: 13px;
+        min-height: 44px;
+        max-height: 120px;
+      }
+      .composer button {
+        padding: 0 16px;
+        border-radius: 999px;
+        border: none;
+        cursor: pointer;
+        font-size: 13px;
+        font-weight: 500;
+        color: #e5e7eb;
+        background: linear-gradient(135deg, #22c55e, #4ade80);
+        white-space: nowrap;
+      }
+      .composer button[disabled] {
+        opacity: 0.5;
+        cursor: default;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>OpenCode + Qwen-Code · ACP Demo</h1>
+      <span>前端 WebSocket ⇄ Node Bridge ⇄ qwen-code ACP</span>
+    </header>
+    <main>
+      <section class="sidebar">
+        <label>
+          qwen-code CLI 入口文件
+          <input
+            id="cliPath"
+            placeholder="/absolute/path/to/qwen-code-cli.mjs"
+            spellcheck="false"
+          />
+        </label>
+        <label>
+          工作目录 (cwd)
+          <input
+            id="cwd"
+            placeholder="默认为服务端进程 cwd"
+            spellcheck="false"
+          />
+        </label>
+        <button id="connectBtn">连接 ACP Agent</button>
+        <div class="status">
+          连接状态：
+          <span id="statusText">未连接</span>
+        </div>
+        <div class="status" id="lastError"></div>
+      </section>
+      <section class="chat">
+        <div id="timeline" class="timeline"></div>
+        <div class="composer">
+          <textarea id="input" placeholder="对 qwen-code 说点什么…"></textarea>
+          <button id="sendBtn" disabled>发送</button>
+        </div>
+      </section>
+    </main>
+    <script>
+      const statusText = document.getElementById("statusText");
+      const lastError = document.getElementById("lastError");
+      const cliPathInput = document.getElementById("cliPath");
+      const cwdInput = document.getElementById("cwd");
+      const connectBtn = document.getElementById("connectBtn");
+      const sendBtn = document.getElementById("sendBtn");
+      const input = document.getElementById("input");
+      const timeline = document.getElementById("timeline");
+
+      /** @type {WebSocket | null} */
+      let ws = null;
+      let connected = false;
+
+      function appendBubble(role, text) {
+        const div = document.createElement("div");
+        div.className = "bubble " + role;
+        div.textContent = text;
+        timeline.appendChild(div);
+        timeline.scrollTop = timeline.scrollHeight;
+      }
+
+      connectBtn.addEventListener("click", () => {
+        if (connected) {
+          ws && ws.close();
+          return;
+        }
+
+        const cliPath = cliPathInput.value.trim();
+        if (!cliPath) {
+          lastError.textContent = "请先填写 qwen-code CLI 入口绝对路径";
+          return;
+        }
+
+        lastError.textContent = "";
+        const url = `ws://${location.host}/ws`;
+        ws = new WebSocket(url);
+
+        ws.onopen = () => {
+          statusText.textContent = "已连接，初始化中…";
+          ws.send(
+            JSON.stringify({
+              type: "init",
+              cliEntryPath: cliPath,
+              cwd: cwdInput.value.trim() || undefined,
+            }),
+          );
+        };
+
+        ws.onmessage = (event) => {
+          const msg = JSON.parse(event.data);
+          switch (msg.type) {
+            case "ready":
+              connected = true;
+              connectBtn.textContent = "断开";
+              sendBtn.disabled = false;
+              statusText.textContent = "就绪，可发送 prompt";
+              appendBubble("system", "✅ ACP 会话已建立");
+              break;
+            case "error":
+              lastError.textContent = msg.message;
+              appendBubble("system", "❌ 错误：" + msg.message);
+              break;
+            case "sessionUpdate": {
+              const update = msg.payload;
+              if (
+                update.update.sessionUpdate === "agent_message_chunk" &&
+                update.update.content?.type === "text"
+              ) {
+                appendBubble("agent", update.update.content.text);
+              } else if (
+                update.update.sessionUpdate === "user_message_chunk" &&
+                update.update.content?.type === "text"
+              ) {
+                appendBubble("user", update.update.content.text);
+              }
+              break;
+            }
+            case "promptResult":
+              // 可以根据 stopReason 做 UI 提示
+              break;
+          }
+        };
+
+        ws.onclose = () => {
+          connected = false;
+          statusText.textContent = "未连接";
+          connectBtn.textContent = "连接 ACP Agent";
+          sendBtn.disabled = true;
+          ws = null;
+        };
+
+        ws.onerror = () => {
+          lastError.textContent = "WebSocket 连接错误";
+        };
+      });
+
+      sendBtn.addEventListener("click", () => {
+        if (!ws || ws.readyState !== WebSocket.OPEN) return;
+        const text = input.value.trim();
+        if (!text) return;
+        appendBubble("user", text);
+        ws.send(
+          JSON.stringify({
+            type: "prompt",
+            text,
+          }),
+        );
+        input.value = "";
+      });
+
+      input.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" && !e.shiftKey) {
+          e.preventDefault();
+          sendBtn.click();
+        }
+      });
+    </script>
+  </body>
+</html>
+
