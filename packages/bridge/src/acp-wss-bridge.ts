@@ -33,7 +33,7 @@ export interface BridgeOptions {
   engine?: EngineType
   opencodePath?: string
   cwd: string
-  wsUrl?: string
+  wsUrl?: string  // 连接到远程 wss-server 的 URL
   streams?: { stdin: WritableStream; stdout: ReadableStream<Uint8Array> }
 }
 
@@ -77,11 +77,14 @@ export class OpencodeAcpBridge {
     console.log("[acp-bridge] initializing ACP connection...")
 
     if (this.opts.streams) {
+      // 使用传入的 streams（可以是远程 WebSocket 或本地进程的 stdio）
       const stream = ndJsonStream(this.opts.streams.stdin, this.opts.streams.stdout)
       this.setupConnection(stream)
     } else if (this.opts.wsUrl) {
+      // 连接到远程 wss-server
       await this.startWebSocketConnection(this.opts.wsUrl)
     } else {
+      // 本地启动 ACP Agent 子进程
       const engine = this.opts.engine ?? "qwen-code"
       await this.spawnChildProcess(engine)
     }
@@ -144,7 +147,7 @@ export class OpencodeAcpBridge {
         const encoder = new TextEncoder()
         const decoder = new TextDecoder()
 
-        // 创建 ReadableStream 接收 WebSocket 消息
+        // 创建 ReadableStream 接收 WebSocket 消息（从 wss-server → acp-stdio-bridge → 进程 stdout）
         const stdout = new ReadableStream<Uint8Array>({
           start: (controller) => {
             this.ws!.onmessage = (event) => {
@@ -164,7 +167,7 @@ export class OpencodeAcpBridge {
           },
         })
 
-        // 创建 WritableStream 发送数据到 WebSocket
+        // 创建 WritableStream 发送数据到 WebSocket（到 wss-server → acp-stdio-bridge → 进程 stdin）
         let isClosed = false
         const stdin = new WritableStream({
           write: (chunk) => {

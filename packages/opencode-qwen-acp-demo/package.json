@@ -2,10 +2,11 @@
   "name": "opencode-qwen-acp-demo",
   "version": "1.0.0",
   "description": "Minimal OpenCode-style web frontend + Qwen-Code agent over ACP demo",
+  "type": "module",
   "main": "dist/server.js",
   "scripts": {
     "build": "tsc",
-    "dev": "ts-node-dev --respawn --transpile-only src/server.ts"
+    "dev": "bunx tsx watch src/wss-server.ts"
   },
   "keywords": [
     "acp",

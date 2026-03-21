@@ -17,9 +17,10 @@ import { streamSSE } from "hono/streaming"
 import { addSseClient, broadcast, getSseClientCount } from "./sse.js"
 import { store } from "./store.js"
 import { handleAcpUpdate, handleAcpPermission } from "./eventConverter.js"
-import { OpencodeAcpBridge, type EngineType } from "./acp-stream-bridge.js"
+import { OpencodeAcpBridge, type EngineType } from "./acp-wss-bridge.js"
 import { createServer } from "http"
 import { WebSocketServer, WebSocket } from "ws"
+import { serve } from "@hono/node-server"
 
 // ========== 配置 ==========
 
@@ -128,6 +129,38 @@ function createWebSocketStreams(ws: WebSocket) {
   }
 }
 
+/**
+ * 创建远程 WebSocket 连接（连接到 wss-server）
+ * @param wsUrl WebSocket 服务器 URL
+ * @returns { stdin: WritableStream, stdout: ReadableStream }
+ */
+async function createRemoteWebSocketConnection(wsUrl: string): Promise<{ stdin: WritableStream; stdout: ReadableStream<Uint8Array> }> {
+  console.log("[acp-wss-bridge] connecting to remote wss-server:", wsUrl)
+
+  return new Promise((resolve, reject) => {
+    const ws = new WebSocket(wsUrl)
+    let isResolved = false
+
+    ws.onerror = (err) => {
+      console.error("[acp-wss-bridge] WebSocket connection error:", err)
+      if (!isResolved) reject(err)
+    }
+
+    ws.onopen = () => {
+      console.log("[acp-wss-bridge] WebSocket connection established")
+      isResolved = true
+      resolve(createWebSocketStreams(ws))
+    }
+
+    ws.onclose = (event) => {
+      console.log("[acp-wss-bridge] WebSocket connection closed", {
+        code: event.code,
+        reason: event.reason,
+      })
+    }
+  })
+}
+
 async function getOrCreateBridge(sessionID: string, directory: string, ws?: WebSocket): Promise<OpencodeAcpBridge> {
   // 用 directory 做 key，同目录共享 bridge
   if (bridges.has(directory)) {
@@ -150,18 +183,30 @@ async function getOrCreateBridge(sessionID: string, directory: string, ws?: WebS
     clientStream = wsStreams.stdin
     serverStream = wsStreams.stdout
   } else {
-    // 使用本地日志 streams（调试用，不连接实际 Agent）
-    clientStream = new WritableStream({
-      write: (chunk) => {
-        console.log("[bridge] → ACP:", new TextDecoder().decode(chunk).trim())
-      },
-    })
+    // 使用远程 wss-server 连接（默认方式）
+    // 完整链路：opencode web -> opencode-fake-server -> acp-wss-bridge -> wss-server -> acp-stdio-bridge -> 进程
+    const wssServerUrl = process.env.WSS_SERVER_URL ?? "ws://localhost:4001/ws"
+    console.log("[acp-wss-bridge] connecting to wss-server:", wssServerUrl)
+    
+    try {
+      const remoteStreams = await createRemoteWebSocketConnection(wssServerUrl)
+      clientStream = remoteStreams.stdin
+      serverStream = remoteStreams.stdout
+    } catch (err) {
+      console.error("[acp-wss-bridge] failed to connect to wss-server, falling back to local mode:", err)
+      // 降级到本地日志模式
+      clientStream = new WritableStream({
+        write: (chunk) => {
+          console.log("[bridge] → ACP:", new TextDecoder().decode(chunk).trim())
+        },
+      })
 
-    serverStream = new ReadableStream<Uint8Array>({
-      start: (controller) => {
-        serverController = controller
-      },
-    })
+      serverStream = new ReadableStream<Uint8Array>({
+        start: (controller) => {
+          serverController = controller
+        },
+      })
+    }
   }
 
   const bridge = new OpencodeAcpBridge(
@@ -691,70 +736,13 @@ app.post("/session/:id/permissions/:pid", async (c) => {
 
 console.log(`[bridge] server starting on http://localhost:${PORT}`)
 console.log(`[bridge] engine: ${ENGINE}, workdir: ${DEFAULT_DIRECTORY}`)
+console.log(`[bridge] wss-server: ${process.env.WSS_SERVER_URL ?? "ws://localhost:4001/ws"}`)
 
-// // 使用 @hono/node-server 启动 HTTP 服务器
-// import { serve } from "@hono/node-server"
-// serve({
-//   fetch: app.fetch,
-//   port: PORT,
-//   createServer: (handler: any) => {
-//     const server = createServer(handler)
-    
-//     // 添加 WebSocket 支持，监听 /ws 路径
-//     const wss = new WebSocketServer({ server, path: "/ws" })
-    
-//     wss.on("connection", (ws: WebSocket) => {
-//       console.log("[ws] client connected")
-      
-//       let sessionID = ""
-//       let directory = DEFAULT_DIRECTORY
-    
-//       ws.on("message", async (data: WebSocket.RawData) => {
-//         try {
-//           const msg = JSON.parse(typeof data === "string" ? data : data.toString())
-          
-//           switch (msg.type) {
-//             case "init":
-//               // 初始化 bridge，传入 cliEntryPath 和 cwd
-//               sessionID = `ws-${Date.now()}`
-//               directory = msg.cwd ?? DEFAULT_DIRECTORY
-//               console.log(`[ws] init: sessionID=${sessionID}, directory=${directory}, cliPath=${msg.cliEntryPath}`)
-              
-//               // 创建 bridge 实例，传入 WebSocket
-//               await getOrCreateBridge(sessionID, directory, ws)
-              
-//               ws.send(JSON.stringify({ type: "ready", sessionId: sessionID }))
-//               break
-              
-//             case "prompt":
-//               // 发送 prompt 到 bridge
-//               if (!sessionID || !bridges.has(directory)) {
-//                 ws.send(JSON.stringify({ type: "error", message: "Not initialized" }))
-//                 return
-//               }
-//               const bridge = bridges.get(directory)!
-//               await bridge.prompt(msg.text)
-//               break
-              
-//             default:
-//               console.warn("[ws] unknown message type:", msg.type)
-//           }
-//         } catch (err: any) {
-//           console.error("[ws] message error:", err.message)
-//           ws.send(JSON.stringify({ type: "error", message: err.message }))
-//         }
-//       })
-    
-//       ws.on("close", () => {
-//         console.log("[ws] client disconnected")
-//         // 清理 bridge（可选，如果需要保持长连接可以不清理）
-//         // if (sessionID && bridges.has(directory)) {
-//         //   bridges.get(directory)?.stop()
-//         //   bridges.delete(directory)
-//         // }
-//       })
-//     })
-    
-//     return server
-//   },
-// })
+// 使用 @hono/node-server 启动 HTTP 服务器
+serve({
+  fetch: app.fetch,
+  port: PORT,
+})
+
+console.log(`[bridge] server is ready at http://localhost:${PORT}`)
+
