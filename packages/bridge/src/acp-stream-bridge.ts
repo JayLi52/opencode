@@ -132,6 +132,12 @@ export class OpencodeAcpBridge {
     return new Promise((resolve, reject) => {
       this.ws = new WebSocket(url)
 
+      // 提前设置错误处理，避免早期错误丢失
+      this.ws.onerror = (err) => {
+        console.error("[acp-bridge] WebSocket error:", err)
+        reject(err)
+      }
+
       this.ws.onopen = () => {
         console.log("[acp-bridge] WebSocket connection established")
         
@@ -176,11 +182,6 @@ export class OpencodeAcpBridge {
         this.setupConnection(stream)
 
         resolve()
-      }
-
-      this.ws.onerror = (err) => {
-        console.error("[acp-bridge] WebSocket error:", err)
-        reject(err)
       }
 
       this.ws.onclose = (event) => {

@@ -17,7 +17,9 @@ import { streamSSE } from "hono/streaming"
 import { addSseClient, broadcast, getSseClientCount } from "./sse.js"
 import { store } from "./store.js"
 import { handleAcpUpdate, handleAcpPermission } from "./eventConverter.js"
-import { OpencodeAcpBridge, type EngineType } from "./acpBridge.js"
+import { OpencodeAcpBridge, type EngineType } from "./acp-stream-bridge.js"
+import { createServer } from "http"
+import { WebSocketServer, WebSocket } from "ws"
 
 // ========== 配置 ==========
 
@@ -78,7 +80,55 @@ const bridges = new Map<string, OpencodeAcpBridge>()
 // directory → sessionID（记录每个 bridge 当前绑定的 sessionID，用于事件回调）
 const bridgeSessionMap = new Map<string, string>()
 
-async function getOrCreateBridge(sessionID: string, directory: string): Promise<OpencodeAcpBridge> {
+/**
+ * 为指定 directory 创建 WebSocket 数据流转换器
+ * @param ws WebSocket 连接
+ * @returns { stdin: WritableStream, stdout: ReadableStream }
+ */
+function createWebSocketStreams(ws: WebSocket) {
+  // 创建一个 WritableStream 用于发送数据到 WebSocket（从 ACP stdout → clientStream → WebSocket）
+  const clientStream = new WritableStream({
+    write: (chunk) => {
+      const data = new TextDecoder().decode(chunk)
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(data)
+      }
+    },
+  })
+
+  // 创建一个 ReadableStream 用于接收 WebSocket 数据（从 WebSocket → serverStream → ACP stdin）
+  let serverController: ReadableStreamDefaultController<Uint8Array> | null = null
+  const serverStream = new ReadableStream<Uint8Array>({
+    start: (controller) => {
+      serverController = controller
+    },
+  })
+
+  // 监听 WebSocket 消息，推入 serverStream
+  ws.on("message", (data: WebSocket.RawData) => {
+    const text = typeof data === "string" ? data : data.toString()
+    const encoder = new TextEncoder()
+    console.log("[ws] receive:", text.trim())
+    serverController?.enqueue(encoder.encode(text + "\n"))
+  })
+
+  ws.on("close", () => {
+    console.log("[ws] connection closed")
+    serverController?.close()
+  })
+
+  ws.on("error", (err: any) => {
+    console.error("[ws] error:", err)
+    serverController?.error(err)
+  })
+
+  return {
+    stdin: clientStream,
+    stdout: serverStream,
+  }
+}
+
+async function getOrCreateBridge(sessionID: string, directory: string, ws?: WebSocket): Promise<OpencodeAcpBridge> {
   // 用 directory 做 key，同目录共享 bridge
   if (bridges.has(directory)) {
     // 更新 session 映射，让事件回调用最新的 sessionID
@@ -89,26 +139,37 @@ async function getOrCreateBridge(sessionID: string, directory: string): Promise<
   // 记录 session → directory 映射
   bridgeSessionMap.set(directory, sessionID)
 
-  // 创建 streams 用于 ACP 协议透传
-  const clientStream = new WritableStream({
-    write: (chunk) => {
-      console.log("[bridge] → ACP:", new TextDecoder().decode(chunk).trim())
-    },
-  })
+  // 如果有 WebSocket，使用 WebSocket streams；否则使用本地日志 streams
+  let clientStream: WritableStream
+  let serverController: ReadableStreamDefaultController<Uint8Array> | null = null
+  let serverStream: ReadableStream<Uint8Array>
 
-  let serverController = null
-  const serverStream = new ReadableStream({
-    start: (controller) => {
-      serverController = controller
-    },
-  })
+  if (ws) {
+    // 使用 WebSocket 数据流
+    const wsStreams = createWebSocketStreams(ws)
+    clientStream = wsStreams.stdin
+    serverStream = wsStreams.stdout
+  } else {
+    // 使用本地日志 streams（调试用，不连接实际 Agent）
+    clientStream = new WritableStream({
+      write: (chunk) => {
+        console.log("[bridge] → ACP:", new TextDecoder().decode(chunk).trim())
+      },
+    })
+
+    serverStream = new ReadableStream<Uint8Array>({
+      start: (controller) => {
+        serverController = controller
+      },
+    })
+  }
 
   const bridge = new OpencodeAcpBridge(
     { 
       engine: currentEngine, 
       opencodePath: ACP_PATH, 
       cwd: directory,
-      // streams: { stdin: clientStream, stdout: serverStream },
+      streams: { stdin: clientStream, stdout: serverStream },
     },
     (update) => {
       // 回调时用 bridgeSessionMap 获取当前活跃的 sessionID
@@ -631,5 +692,69 @@ app.post("/session/:id/permissions/:pid", async (c) => {
 console.log(`[bridge] server starting on http://localhost:${PORT}`)
 console.log(`[bridge] engine: ${ENGINE}, workdir: ${DEFAULT_DIRECTORY}`)
 
-import { serve } from "@hono/node-server"
-serve({ fetch: app.fetch, port: PORT })
+// // 使用 @hono/node-server 启动 HTTP 服务器
+// import { serve } from "@hono/node-server"
+// serve({
+//   fetch: app.fetch,
+//   port: PORT,
+//   createServer: (handler: any) => {
+//     const server = createServer(handler)
+    
+//     // 添加 WebSocket 支持，监听 /ws 路径
+//     const wss = new WebSocketServer({ server, path: "/ws" })
+    
+//     wss.on("connection", (ws: WebSocket) => {
+//       console.log("[ws] client connected")
+      
+//       let sessionID = ""
+//       let directory = DEFAULT_DIRECTORY
+    
+//       ws.on("message", async (data: WebSocket.RawData) => {
+//         try {
+//           const msg = JSON.parse(typeof data === "string" ? data : data.toString())
+          
+//           switch (msg.type) {
+//             case "init":
+//               // 初始化 bridge，传入 cliEntryPath 和 cwd
+//               sessionID = `ws-${Date.now()}`
+//               directory = msg.cwd ?? DEFAULT_DIRECTORY
+//               console.log(`[ws] init: sessionID=${sessionID}, directory=${directory}, cliPath=${msg.cliEntryPath}`)
+              
+//               // 创建 bridge 实例，传入 WebSocket
+//               await getOrCreateBridge(sessionID, directory, ws)
+              
+//               ws.send(JSON.stringify({ type: "ready", sessionId: sessionID }))
+//               break
+              
+//             case "prompt":
+//               // 发送 prompt 到 bridge
+//               if (!sessionID || !bridges.has(directory)) {
+//                 ws.send(JSON.stringify({ type: "error", message: "Not initialized" }))
+//                 return
+//               }
+//               const bridge = bridges.get(directory)!
+//               await bridge.prompt(msg.text)
+//               break
+              
+//             default:
+//               console.warn("[ws] unknown message type:", msg.type)
+//           }
+//         } catch (err: any) {
+//           console.error("[ws] message error:", err.message)
+//           ws.send(JSON.stringify({ type: "error", message: err.message }))
+//         }
+//       })
+    
+//       ws.on("close", () => {
+//         console.log("[ws] client disconnected")
+//         // 清理 bridge（可选，如果需要保持长连接可以不清理）
+//         // if (sessionID && bridges.has(directory)) {
+//         //   bridges.get(directory)?.stop()
+//         //   bridges.delete(directory)
+//         // }
+//       })
+//     })
+    
+//     return server
+//   },
+// })

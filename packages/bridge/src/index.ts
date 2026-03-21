@@ -1,1 +1,1 @@
-import "./server.js"
+import "./opencode-fake-server.js"

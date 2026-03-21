@@ -12,10 +12,12 @@
   "dependencies": {
     "@agentclientprotocol/sdk": "^0.16.1",
     "@hono/node-server": "^1.19.11",
+    "@types/ws": "8.18.1",
     "cross-spawn": "7.0.6",
     "hono": "catalog:",
     "tsx": "^4.21.0",
-    "ulid": "catalog:"
+    "ulid": "catalog:",
+    "ws": "8.19.0"
   },
   "devDependencies": {
     "@types/bun": "catalog:",

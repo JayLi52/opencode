@@ -2,7 +2,7 @@ import http from "http"
 import express from "express"
 import { WebSocketServer, type WebSocket } from "ws"
 import path from "path"
-import { QwenAcpBridge } from "./acpBridge"
+import { QwenAcpBridge } from "./acp-stdio-bridge"
 import type { SessionNotification } from "@agentclientprotocol/sdk"
 
 const app = express()
@@ -33,6 +33,7 @@ wss.on("connection", (socket: WebSocket) => {
   socket.on("message", (data: WebSocket.RawData) => {
     const text = typeof data === "string" ? data : data.toString()
     const encoder = new TextEncoder()
+    console.log("[ws] receive:", text)
     controller?.enqueue(encoder.encode(text + "\n"))
   })
 
