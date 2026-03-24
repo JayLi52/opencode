@@ -35,8 +35,9 @@ const ENGINE: EngineType = (process.env.ACP_ENGINE as EngineType) ?? "qwen-code"
 const ACP_PATH = process.env.ACP_PATH
 
 // 前端实际使用的 directory（从 x-opencode-directory header 获取）
-// bridge 的 SSE 事件需要用这个 directory，否则前端的 child store 匹配不上
-// per-session 跟踪，因为前端可能有多个 directory 的 child store
+// 注意：不再依赖全局 activeDirectory 做 SSE 事件的 directory
+// 每个 session 通过 sessionDirectory 精确跟踪自己的 directory
+// activeDirectory 仅用于无法从 session 推断 directory 的场景（如 /path、/project 等全局路由）
 let activeDirectory = DEFAULT_DIRECTORY
 const sessionDirectory = new Map<string, string>() // sessionID → directory
 
@@ -45,7 +46,23 @@ function getDirectory(sessionID?: string): string {
     const dir = sessionDirectory.get(sessionID)
     if (dir) return dir
   }
-  return activeDirectory
+  return DEFAULT_DIRECTORY
+}
+
+/**
+ * 从请求 header 中提取 directory（请求级别，不污染全局状态）
+ * 前端 SDK 每个请求都带 x-opencode-directory header
+ */
+function getRequestDirectory(c: { req: { header: (name: string) => string | undefined } }): string {
+  const raw = c.req.header("x-opencode-directory")
+  if (raw) {
+    try {
+      return decodeURIComponent(raw)
+    } catch {
+      return raw
+    }
+  }
+  return DEFAULT_DIRECTORY
 }
 
 // ========== 项目列表管理 ==========
@@ -194,7 +211,19 @@ async function getOrCreateBridge(sessionID: string, directory: string, ws?: WebS
     console.log("[acp-wss-bridge] connecting to wss-server:", wssServerUrl)
     
     try {
-      const remoteStreams = await createRemoteWebSocketConnection(wssServerUrl)
+      // 把 directory、engine 对应的 command/args 传给 wss-server
+      const urlWithParams = new URL(wssServerUrl)
+      urlWithParams.searchParams.set("cwd", directory)
+      // qwen-code → command=qwen, args=--acp
+      // opencode  → command=opencode, args=acp
+      if (currentEngine === "qwen-code") {
+        urlWithParams.searchParams.set("command", "qwen")
+        urlWithParams.searchParams.set("args", "--acp")
+      } else {
+        urlWithParams.searchParams.set("command", "opencode")
+        urlWithParams.searchParams.set("args", "acp")
+      }
+      const remoteStreams = await createRemoteWebSocketConnection(urlWithParams.toString())
       clientStream = remoteStreams.stdin
       serverStream = remoteStreams.stdout
     } catch (err) {
@@ -246,12 +275,16 @@ const app = new Hono()
 // CORS
 app.use("*", cors({ origin: "*", allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"] }))
 
-// 从 x-opencode-directory header 提取前端实际使用的 directory
-// 前端 SDK 每个请求都会带这个 header
+// 从 x-opencode-directory header 更新 activeDirectory（仅用于全局路由的 fallback）
 app.use("*", async (c, next) => {
   const raw = c.req.header("x-opencode-directory")
   if (raw) {
-    const decoded = decodeURIComponent(raw)
+    let decoded: string
+    try {
+      decoded = decodeURIComponent(raw)
+    } catch {
+      decoded = raw
+    }
     if (decoded) {
       activeDirectory = decoded
     }
@@ -294,10 +327,29 @@ app.post("/engine/switch", async (c) => {
   currentEngine = newEngine
   console.log(`[bridge] engine switched to: ${currentEngine}`)
 
-  // 广播引擎切换事件，前端收到后可以跳转到新 session
-  broadcast(activeDirectory, "engine.switched", { engine: currentEngine })
+  // 广播引擎切换事件给所有已知的 directory
+  for (const dir of projectSet.keys()) {
+    broadcast(dir, "engine.switched", { engine: currentEngine })
+  }
 
-  return c.json({ engine: currentEngine, changed: true })
+  // 为当前活跃目录自动创建新 session
+  const dir = getRequestDirectory(c)
+  touchProject(dir)
+  const session = store.createSession({
+    directory: dir,
+    model: { providerID: "bridge", modelID: "bridge-agent" },
+    agent: "coder",
+    title: `New Session (${currentEngine})`,
+  })
+  sessionDirectory.set(session.id, dir)
+
+  // 初始化新引擎的 bridge
+  await getOrCreateBridge(session.id, dir)
+
+  const sessionData = makeSessionInfo(session)
+  broadcast(dir, "session.updated", { info: sessionData })
+
+  return c.json({ engine: currentEngine, changed: true, session: sessionData })
 })
 
 // ========== 全局路由 ==========
@@ -360,12 +412,13 @@ app.patch("/global/config", (c) => c.json({}))
 
 app.get("/path", (c) => {
   const home = process.env.HOME ?? "/home/user"
+  const dir = getRequestDirectory(c)
   return c.json({
     home,
     state: `${home}/.local/state/opencode`,
     config: `${home}/.config/opencode`,
-    worktree: activeDirectory,
-    directory: activeDirectory,
+    worktree: dir,
+    directory: dir,
   })
 })
 
@@ -418,22 +471,24 @@ app.get("/config/providers", (c) => c.json([]))
 // 返回所有打开过的项目列表
 
 app.get("/project", (c) => {
-  // 确保当前 activeDirectory 在列表中
-  touchProject(activeDirectory)
+  const dir = getRequestDirectory(c)
+  touchProject(dir)
   const projects = Array.from(projectSet.values())
     .sort((a, b) => b.time.updated - a.time.updated)
     .map((p) => ({ ...p, sandboxes: [] }))
   return c.json(projects)
 })
 app.get("/project/current", (c) => {
-  touchProject(activeDirectory)
-  return c.json(makeProject(activeDirectory))
+  const dir = getRequestDirectory(c)
+  touchProject(dir)
+  return c.json(makeProject(dir))
 })
 app.patch("/project/:id", async (c) => {
   const body = await c.req.json().catch(() => ({}))
+  const dir = getRequestDirectory(c)
   const directory = body.directory ?? c.req.param("id")
   if (directory) touchProject(directory)
-  return c.json(makeProject(directory ?? activeDirectory))
+  return c.json(makeProject(directory ?? dir))
 })
 
 // ========== Agent 路由 ==========
@@ -452,7 +507,7 @@ app.get("/mcp", (c) => c.json({}))
 app.get("/mcp/status", (c) => c.json({}))
 app.get("/lsp", (c) => c.json([]))
 app.get("/experimental/lsp", (c) => c.json([]))
-app.get("/experimental/session", (c) => c.json(store.listSessions(activeDirectory).map(makeSessionInfo)))
+app.get("/experimental/session", (c) => c.json(store.listSessions(getRequestDirectory(c)).map(makeSessionInfo)))
 app.get("/session/status", (c) => c.json({}))
 app.get("/skill", (c) => c.json([]))
 app.post("/log", (c) => c.json({ ok: true }))
@@ -460,7 +515,7 @@ app.post("/log", (c) => c.json({ ok: true }))
 // ========== 文件系统路由 ==========
 
 app.get("/file", async (c) => {
-  const directory = c.req.query("directory") ?? activeDirectory
+  const directory = c.req.query("directory") ?? getRequestDirectory(c)
   const path = c.req.query("path") ?? ""
   const target = path ? `${directory}/${path}`.replace(/\/+/g, "/") : directory
   try {
@@ -482,9 +537,8 @@ app.get("/file", async (c) => {
   }
 })
 
-// 读取文件内容 — 前端点击文件查看时调用
 app.get("/file/content", async (c) => {
-  const directory = c.req.query("directory") ?? activeDirectory
+  const directory = c.req.query("directory") ?? getRequestDirectory(c)
   const filePath = c.req.query("path") ?? ""
   if (!filePath) return c.json({ type: "text", content: "" })
 
@@ -520,7 +574,7 @@ app.get("/file/content", async (c) => {
 app.get("/file/status", (c) => c.json([]))
 
 app.get("/find/file", async (c) => {
-  const directory = c.req.query("directory") ?? activeDirectory
+  const directory = c.req.query("directory") ?? getRequestDirectory(c)
   const query = c.req.query("query") ?? ""
   const type = c.req.query("type") ?? "directory"
   const limit = parseInt(c.req.query("limit") ?? "50")
@@ -558,40 +612,40 @@ function makeSessionInfo(s: import("./store.js").SessionInfo) {
 }
 
 app.get("/session", (c) => {
-  // 返回当前 activeDirectory 下的 session 列表
-  return c.json(store.listSessions(activeDirectory).map(makeSessionInfo))
+  const dir = getRequestDirectory(c)
+  return c.json(store.listSessions(dir).map(makeSessionInfo))
 })
 
 app.post("/session", async (c) => {
   const body = await c.req.json().catch(() => ({}))
-  // 确保当前目录在项目列表中
-  touchProject(activeDirectory)
+  const dir = getRequestDirectory(c)
+  touchProject(dir)
   const session = store.createSession({
-    directory: activeDirectory,
+    directory: dir,
     model: body.model ?? { providerID: "bridge", modelID: "bridge-agent" },
     agent: body.agent ?? "coder",
   })
-  sessionDirectory.set(session.id, activeDirectory)
+  sessionDirectory.set(session.id, dir)
   
   // 提前初始化 bridge 实例，确保 session 创建时就准备好
-  await getOrCreateBridge(session.id, activeDirectory)
+  await getOrCreateBridge(session.id, dir)
   
   const sessionData = makeSessionInfo(session)
-  // 前端期望 session.updated 的 properties 是 { info: Session }
-  broadcast(activeDirectory, "session.updated", { info: sessionData })
+  broadcast(dir, "session.updated", { info: sessionData })
   return c.json(sessionData)
 })
 
 app.get("/session/:id", (c) => {
   const id = c.req.param("id")
+  const dir = getRequestDirectory(c)
   let session = store.getSession(id)
   if (!session) {
-    session = store.createSessionWithId(id, { directory: activeDirectory })
-    sessionDirectory.set(id, activeDirectory)
+    session = store.createSessionWithId(id, { directory: dir })
+    sessionDirectory.set(id, dir)
   }
   
   // 确保 bridge 已初始化（如果还没创建），不阻塞响应
-  getOrCreateBridge(id, activeDirectory).catch(console.error)
+  getOrCreateBridge(id, dir).catch(console.error)
   
   return c.json(makeSessionInfo(session))
 })
@@ -658,17 +712,17 @@ app.delete("/session/:id", (c) => {
 app.post("/session/:id/prompt_async", async (c) => {
   const sessionID = c.req.param("id")
   const body = await c.req.json().catch(() => ({}))
+  const dir = getRequestDirectory(c)
 
   // 确保 session 存在，并记录 directory
   const existingSession = store.getSession(sessionID)
   if (!existingSession) {
-    store.createSessionWithId(sessionID, { directory: activeDirectory })
+    store.createSessionWithId(sessionID, { directory: dir })
   }
 
   // 记住这个 session 对应的前端 directory，SSE 事件需要用
-  sessionDirectory.set(sessionID, activeDirectory)
-  // 确保目录在项目列表中
-  touchProject(activeDirectory)
+  sessionDirectory.set(sessionID, dir)
+  touchProject(dir)
 
   const sessionDir = getDirectory(sessionID)
 

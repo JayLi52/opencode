@@ -55,6 +55,7 @@ import { PromptContextItems } from "./prompt-input/context-items"
 import { PromptImageAttachments } from "./prompt-input/image-attachments"
 import { PromptDragOverlay } from "./prompt-input/drag-overlay"
 import { promptPlaceholder } from "./prompt-input/placeholder"
+import { useEngine } from "@/hooks/use-engine"
 import { ImagePreview } from "@opencode-ai/ui/image-preview"
 
 interface PromptInputProps {
@@ -114,6 +115,7 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
   const permission = usePermission()
   const language = useLanguage()
   const platform = usePlatform()
+  const engineCtrl = useEngine()
   const { params, tabs, view } = useSessionLayout()
   let editorRef!: HTMLDivElement
   let fileInputRef: HTMLInputElement | undefined
@@ -1441,6 +1443,22 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
                 <div class="size-4 shrink-0" />
               </div>
               <div class="flex items-center gap-1.5 min-w-0 flex-1">
+                <div data-component="prompt-engine-control">
+                  <Tooltip placement="top" gutter={4} value="Switch Engine">
+                    <Select
+                      size="normal"
+                      options={engineCtrl.options}
+                      current={engineCtrl.engine()}
+                      label={(e) => engineCtrl.label(e)}
+                      onSelect={(e) => void engineCtrl.switchEngine(e)}
+                      class="max-w-[140px] text-text-base"
+                      valueClass="truncate text-13-regular text-text-base"
+                      triggerStyle={control()}
+                      triggerProps={{ "data-action": "prompt-engine", disabled: engineCtrl.switching() }}
+                      variant="ghost"
+                    />
+                  </Tooltip>
+                </div>
                 <div data-component="prompt-agent-control">
                   <TooltipKeybind
                     placement="top"

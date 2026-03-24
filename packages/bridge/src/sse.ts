@@ -36,7 +36,9 @@ export function addSseClient(writer: SseWriter): () => void {
 // 向所有客户端广播事件
 export function broadcast(directory: string, type: string, properties: unknown) {
   const data = JSON.stringify({ directory, payload: { type, properties } })
-  if (type !== "session.status") {
+  if (type === "session.diff" || type === "file.watcher.updated") {
+    console.log(`[sse] ★ broadcast dir="${directory}" type=${type} clients=${clients.size} data=${data.substring(0, 300)}`)
+  } else if (type !== "session.status") {
     console.log(`[sse] broadcast dir="${directory}" type=${type} clients=${clients.size} data=${data.substring(0, 150)}`)
   } else {
     console.log(`[sse] broadcast dir="${directory}" type=${type} clients=${clients.size}`)

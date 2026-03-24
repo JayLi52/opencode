@@ -19,13 +19,16 @@ import { Readable, Writable } from "node:stream"
 const server = http.createServer()
 const wss = new WebSocketServer({ server, path: "/ws" })
 
-// 从 URL query 获取 cwd
-function parseQuery(url: string | undefined): { cwd?: string } {
+// 从 URL query 获取连接参数
+function parseQuery(url: string | undefined): { cwd?: string; command?: string; args?: string } {
   if (!url) return {}
   try {
     const urlObj = new URL(url, "http://localhost")
-    const cwdParam = urlObj.searchParams.get("cwd")
-    return cwdParam ? { cwd: cwdParam } : {}
+    return {
+      cwd: urlObj.searchParams.get("cwd") ?? undefined,
+      command: urlObj.searchParams.get("command") ?? undefined,
+      args: urlObj.searchParams.get("args") ?? undefined,
+    }
   } catch {
     return {}
   }
@@ -34,17 +37,16 @@ function parseQuery(url: string | undefined): { cwd?: string } {
 wss.on("connection", (socket: WebSocket, req) => {
   let child: ChildProcess | null = null
 
-  // 解析 query 参数获取 cwd
-  const { cwd } = parseQuery(req.url)
+  // 解析 query 参数
+  const { cwd, command: queryCommand, args: queryArgs } = parseQuery(req.url)
   const workDir = cwd ?? process.cwd()
 
   console.log("[wss-server] connection received, cwd:", workDir)
 
-  // 启动 ACP 进程 - 从环境变量或 query 参数获取命令
-  // 支持: ACP_COMMAND 环境变量, 或 ws URL 的 ?command=xxx 参数
-  const urlObj = req.url ? new URL(req.url, "http://localhost") : null
-  const spawnCommand = urlObj?.searchParams.get("command") ?? process.env.ACP_COMMAND ?? "qwen"
-  const spawnArgs = process.env.ACP_ARGS ? process.env.ACP_ARGS.split(" ") : ["--acp"]
+  // 启动 ACP 进程
+  // 优先级：URL query 参数 > 环境变量 > 默认值
+  const spawnCommand = queryCommand ?? process.env.ACP_COMMAND ?? "qwen"
+  const spawnArgs = queryArgs ? queryArgs.split(" ") : (process.env.ACP_ARGS ? process.env.ACP_ARGS.split(" ") : ["--acp"])
   const options: SpawnOptions = {
     cwd: workDir,
     stdio: ["pipe", "pipe", "pipe"],

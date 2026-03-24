@@ -279,6 +279,11 @@ function createGlobalSync() {
     const directory = e.name
     const event = e.details
 
+    // [debug] 打印所有非心跳/非健康检查的 SSE 事件
+    if (event.type !== "server.heartbeat" && event.type !== "session.status") {
+      console.log(`[global-sync] SSE event: dir="${directory}" type="${event.type}"`, event.properties)
+    }
+
     if (directory === "global") {
       applyGlobalEvent({
         event,
@@ -295,7 +300,11 @@ function createGlobalSync() {
     }
 
     const existing = children.children[directory]
-    if (!existing) return
+    if (!existing) {
+      // [debug] 事件被丢弃！directory 不在 child store 中
+      console.warn(`[global-sync] ★ EVENT DROPPED: dir="${directory}" type="${event.type}" — no child store. Known dirs:`, Object.keys(children.children))
+      return
+    }
     children.mark(directory)
     const [store, setStore] = existing
     applyDirectoryEvent({

@@ -201,6 +201,10 @@ export const { use: useFile, provider: FileProvider } = createSimpleContext({
       )
 
     const stop = sdk.event.listen((e) => {
+      // [debug] 打印 file.watcher.updated 事件
+      if (e.details?.type === "file.watcher.updated") {
+        console.log(`[file] ★ file.watcher.updated received: scope="${scope()}"`, e.details.properties)
+      }
       invalidateFromWatcher(e.details, {
         normalize: path.normalize,
         hasFile: (file) => Boolean(store.file[file]),

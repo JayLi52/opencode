@@ -128,20 +128,20 @@ class BridgeStore {
 
   // ---- 会话管理 ----
 
-  createSession(opts: { directory: string; model?: { providerID: string; modelID: string }; agent?: string }): SessionInfo {
+  createSession(opts: { directory: string; model?: { providerID: string; modelID: string }; agent?: string; title?: string }): SessionInfo {
     const id = ulid()
     return this._makeSession(id, opts)
   }
 
-  createSessionWithId(id: string, opts: { directory: string; model?: { providerID: string; modelID: string }; agent?: string }): SessionInfo {
+  createSessionWithId(id: string, opts: { directory: string; model?: { providerID: string; modelID: string }; agent?: string; title?: string }): SessionInfo {
     if (this.sessions.has(id)) return this.sessions.get(id)!
     return this._makeSession(id, opts)
   }
 
-  private _makeSession(id: string, opts: { directory: string; model?: { providerID: string; modelID: string }; agent?: string }): SessionInfo {
+  private _makeSession(id: string, opts: { directory: string; model?: { providerID: string; modelID: string }; agent?: string; title?: string }): SessionInfo {
     const session: SessionInfo = {
       id,
-      title: "New Session",
+      title: opts.title ?? "New Session",
       directory: opts.directory,
       time: { created: Date.now(), updated: Date.now() },
       model: opts.model,
@@ -288,21 +288,23 @@ class BridgeStore {
   // ---- 文件变更管理（session diff）----
   private sessionDiffs = new Map<string, Array<{ file: string; before: string; after: string; additions: number; deletions: number }>>()
 
-  addFileDiff(sessionID: string, file: string, before: string, after: string) {
+  addFileDiff(sessionID: string, file: string, before: string, after: string, additions?: number, deletions?: number) {
     if (!this.sessionDiffs.has(sessionID)) {
       this.sessionDiffs.set(sessionID, [])
     }
     const diffs = this.sessionDiffs.get(sessionID)!
+    // 如果调用方提供了精确的 additions/deletions 就用，否则 fallback 到行数估算
+    const adds = additions ?? after.split("\n").length
+    const dels = deletions ?? (before ? before.split("\n").length : 0)
     // 如果同一个文件已经有 diff，更新它（取最新的 after）
     const existing = diffs.find((d) => d.file === file)
-    const additions = after.split("\n").length
-    const deletions = before ? before.split("\n").length : 0
     if (existing) {
+      existing.before = before
       existing.after = after
-      existing.additions = additions
-      existing.deletions = deletions
+      existing.additions = adds
+      existing.deletions = dels
     } else {
-      diffs.push({ file, before, after, additions, deletions })
+      diffs.push({ file, before, after, additions: adds, deletions: dels })
     }
   }
 

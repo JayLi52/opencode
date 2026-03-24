@@ -25,7 +25,11 @@ export function invalidateFromWatcher(event: WatcherEvent, ops: WatcherOps) {
   if (!kind) return
 
   const path = ops.normalize(rawPath)
-  if (!path) return
+  console.log(`[watcher] invalidate: kind=${kind}, rawPath=${rawPath}, normalized="${path}"`)
+  if (!path) {
+    console.warn(`[watcher] normalized path is empty, skipping`)
+    return
+  }
   if (path.startsWith(".git/")) return
 
   if (ops.hasFile(path) || ops.isOpen?.(path)) {
@@ -47,7 +51,24 @@ export function invalidateFromWatcher(event: WatcherEvent, ops: WatcherOps) {
   if (kind !== "add" && kind !== "unlink") return
 
   const parent = path.split("/").slice(0, -1).join("/")
-  if (!ops.isDirLoaded(parent)) return
+  const parentLoaded = ops.isDirLoaded(parent)
+  console.log(`[watcher] kind=${kind}, path="${path}", parent="${parent}", parentLoaded=${parentLoaded}`)
+
+  if (!parentLoaded) {
+    // 向上查找最近的已加载目录并刷新它
+    // 这样即使直接父目录未展开，祖先目录也能感知到变化
+    const segments = parent.split("/")
+    for (let i = segments.length - 1; i >= 0; i--) {
+      const ancestor = segments.slice(0, i).join("/")
+      if (ops.isDirLoaded(ancestor)) {
+        console.log(`[watcher] parent not loaded, refreshing ancestor="${ancestor}"`)
+        ops.refreshDir(ancestor)
+        return
+      }
+    }
+    console.warn(`[watcher] no loaded ancestor found for parent="${parent}"`)
+    return
+  }
 
   ops.refreshDir(parent)
 }
