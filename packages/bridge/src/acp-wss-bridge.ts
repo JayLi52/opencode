@@ -112,6 +112,7 @@ export class OpencodeAcpBridge {
         },
 
         async requestPermission(params) {
+          console.log("[acp-bridge] requestPermission params:", JSON.stringify(params).substring(0, 500))
           return self.onPermission(params as any)
         },
 
@@ -200,11 +201,16 @@ export class OpencodeAcpBridge {
     let spawnCommand: string
     let spawnArgs: string[]
 
-    if (_engine === "qwen-code") {
-      spawnCommand = this.opts.opencodePath ?? "qwen"
+    if (this.opts.opencodePath) {
+      // 用户显式指定了路径，直接用
+      spawnCommand = this.opts.opencodePath
+      spawnArgs = _engine === "qwen-code" ? ["--acp"] : ["acp"]
+    } else if (_engine === "qwen-code") {
+      // 优先从环境变量 ACP_COMMAND 获取，否则用 "qwen"
+      spawnCommand = process.env.ACP_COMMAND ?? "qwen"
       spawnArgs = ["--acp"]
     } else {
-      spawnCommand = "opencode"
+      spawnCommand = process.env.ACP_COMMAND ?? "opencode"
       spawnArgs = ["acp"]
     }
 
@@ -212,7 +218,7 @@ export class OpencodeAcpBridge {
       cwd: this.opts.cwd,
       stdio: ["pipe", "pipe", "pipe"],
       env: { ...process.env },
-      shell: "/bin/zsh", // 显式指定 macOS 默认 shell
+      shell: true, // 使用系统默认 shell，兼容 macOS/Linux
     }
 
     console.log("[acp-bridge] spawning:", spawnCommand, spawnArgs, "cwd:", options.cwd)

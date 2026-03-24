@@ -13,8 +13,8 @@ import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process"
 
 export interface BridgeOptions {
   /**
-   * qwen-code CLI 入口脚本路径，例如：
-   *   /Users/terry/work/ai-workspace/qwen-code/packages/cli/dist/index.mjs
+   * ACP CLI 入口脚本路径，例如：
+   *   qwen（全局安装）或 /path/to/qwen-code/packages/cli/dist/index.mjs
    */
   cliEntryPath: string
   /**

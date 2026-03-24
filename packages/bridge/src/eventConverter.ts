@@ -6,6 +6,13 @@
  * 转换成 opencode web 前端期望的 SSE 事件格式。
  *
  * 参考：opencode/packages/opencode/src/acp/agent.ts handleEvent（反向操作）
+ *
+ * 修复记录：
+ * - [fix] tool title 显示 "unknown"：ACP 的 tool_call_update(completed) 事件不带 title 字段，
+ *   新增 toolTitleCache 缓存 tool_call(in_progress) 和 request_permission 中的 title，
+ *   completed 时从缓存取，fallback 到 _meta.toolName
+ * - [fix] emitPermissionAsked 补充 patterns/always/messageID 字段，修复前端 permission dock 崩溃
+ * - [fix] handleAcpPermission 保存 acpOptions 到 pending，用于 optionId 映射
  */
 
 import * as path from "node:path"
@@ -21,6 +28,11 @@ import {
   emitPermissionAsked,
   broadcast,
 } from "./sse.js"
+
+// toolCallId → title 缓存
+// tool_call(in_progress) 和 request_permission 都会带 title，
+// 但 tool_call_update(completed) 不带，需要从缓存里取
+const toolTitleCache = new Map<string, string>()
 
 /**
  * 处理一条 ACP sessionUpdate 事件
@@ -87,9 +99,20 @@ export function handleAcpUpdate(sessionID: string, directory: string, update: Se
       }
 
       const toolCallId: string = u.toolCallId ?? u.toolCall?.id ?? ""
-      const toolTitle: string = u.title ?? u.toolCall?.title ?? "unknown"
       const rawInput: Record<string, unknown> = u.rawInput ?? u.toolCall?.input ?? {}
       const acpStatus: string = u.status ?? "in_progress"
+
+      // title 解析优先级：事件自带 > 缓存 > _meta.toolName > "unknown"
+      let toolTitle: string = u.title ?? u.toolCall?.title ?? ""
+      if (toolTitle && toolTitle !== "unknown" && toolCallId) {
+        // 有有效 title，缓存起来
+        toolTitleCache.set(toolCallId, toolTitle)
+      } else if (!toolTitle || toolTitle === "unknown") {
+        // 没有 title，从缓存取
+        toolTitle = (toolCallId && toolTitleCache.get(toolCallId))
+          ?? u._meta?.toolName
+          ?? "unknown"
+      }
 
       // 映射 ACP status → opencode status
       let ocStatus: "pending" | "running" | "completed" | "error"
@@ -104,7 +127,7 @@ export function handleAcpUpdate(sessionID: string, directory: string, update: Se
           status: "completed",
           input: rawInput,
           output: outputText,
-          title: u.title,
+          title: toolTitle,
           metadata: u.rawOutput?.metadata,
           time: { start: Date.now() - 1000, end: Date.now() },
         }
@@ -180,6 +203,18 @@ export async function handleAcpPermission(
   const toolCallId = params.toolCall?.toolCallId ?? ""
   const toolTitle = params.toolCall?.title ?? "unknown"
   const rawInput = params.toolCall?.rawInput ?? {}
+  const acpOptions = params.options ?? []
+
+  // request_permission 事件带有完整的 title（如 "Writing to README.md"），缓存起来
+  if (toolCallId && toolTitle && toolTitle !== "unknown") {
+    toolTitleCache.set(toolCallId, toolTitle)
+  }
+
+  // 获取当前 assistant message ID（权限请求一定发生在 assistant 回复过程中）
+  const currentMsg = store.getCurrentAssistantMsg(sessionID)
+  const messageID = currentMsg?.info.id ?? ""
+
+  console.log(`[permission] ACP requestPermission: tool=${toolTitle}, options=`, JSON.stringify(acpOptions))
 
   // 挂起，等待前端通过 POST /session/:id/permissions/:pid 回复
   return new Promise((resolve) => {
@@ -188,13 +223,14 @@ export async function handleAcpPermission(
       toolCallId,
       toolTitle,
       rawInput,
+      acpOptions,
       resolve: (optionId: string) => {
         resolve({ outcome: { outcome: "selected", optionId } })
       },
     })
 
     // 推送 permission.asked 事件给前端
-    emitPermissionAsked(directory, permissionID, sessionID, toolCallId, toolTitle, rawInput)
+    emitPermissionAsked(directory, permissionID, sessionID, messageID, toolCallId, toolTitle, rawInput)
   })
 }
 

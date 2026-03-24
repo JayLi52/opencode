@@ -6,6 +6,10 @@
  *
  * opencode 前端期望的 SSE 事件格式：
  * data: {"directory":"/path","payload":{"type":"xxx","properties":{...}}}
+ *
+ * 修复记录：
+ * - [fix] emitPermissionAsked 补充 patterns:[] 和 always:[] 字段，修复前端 patterns.length 崩溃
+ * - [fix] emitPermissionAsked 补充 messageID 参数，SDK 要求 tool 字段包含 { messageID, callID }
  */
 
 import type { MessagePart, ToolPart, MessageInfo } from "./store.js"
@@ -118,6 +122,7 @@ export function emitPermissionAsked(
   directory: string,
   permissionID: string,
   sessionID: string,
+  messageID: string,
   toolCallId: string,
   toolTitle: string,
   rawInput: Record<string, unknown>,
@@ -126,7 +131,9 @@ export function emitPermissionAsked(
     id: permissionID,
     sessionID,
     permission: toolTitle,
-    tool: { callID: toolCallId },
+    patterns: [],
+    always: [],
+    tool: { messageID, callID: toolCallId },
     metadata: rawInput,
   })
 }

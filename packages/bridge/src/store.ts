@@ -4,6 +4,11 @@
  * 维护会话列表、消息历史、权限请求队列等状态。
  * 这些数据在 opencode server 里是存在 SQLite 里的，
  * 桥接层用内存 Map 简单模拟。
+ *
+ * 修复记录：
+ * - [fix] PendingPermission 新增 acpOptions 字段，保存 ACP Agent 传来的 options 数组
+ * - [fix] 新增 mapOptionId() 方法，将前端的 once/always/reject 映射为 ACP 的
+ *   proceed_once/proceed_always/cancel 等实际 optionId
  */
 
 import { ulid } from "ulid"
@@ -105,6 +110,7 @@ export interface PendingPermission {
   toolCallId: string
   toolTitle: string
   rawInput: Record<string, unknown>
+  acpOptions?: Array<{ optionId: string; kind: string }>
   resolve: (optionId: string) => void
 }
 
@@ -309,15 +315,63 @@ class BridgeStore {
   addPendingPermission(perm: PendingPermission): string {
     const id = ulid()
     this.pendingPermissions.set(id, perm)
+    console.log(`[store] addPendingPermission: id=${id}, tool=${perm.toolTitle}, pending count=${this.pendingPermissions.size}`)
     return id
   }
 
   resolvePendingPermission(id: string, optionId: string): boolean {
     const perm = this.pendingPermissions.get(id)
-    if (!perm) return false
-    perm.resolve(optionId)
+    if (!perm) {
+      console.warn(`[store] permission ${id} not found, pending keys=`, [...this.pendingPermissions.keys()])
+      return false
+    }
+
+    // 前端发的是 "once"/"always"/"reject"
+    // ACP Agent 期望的是 "proceed_once"/"proceed_always"/"cancel" 等
+    // 用 ACP 传来的 options 做映射
+    const acpOptionId = this.mapOptionId(optionId, perm.acpOptions)
+    console.log(`[store] resolvePendingPermission: id=${id}, frontend=${optionId}, acp=${acpOptionId}`)
+    perm.resolve(acpOptionId)
     this.pendingPermissions.delete(id)
     return true
+  }
+
+  /**
+   * 把前端的 once/always/reject 映射成 ACP Agent 实际的 optionId
+   */
+  private mapOptionId(frontendOption: string, acpOptions?: Array<{ optionId: string; kind: string }>): string {
+    if (!acpOptions || acpOptions.length === 0) {
+      // 没有 ACP options，用默认映射
+      const defaultMap: Record<string, string> = {
+        once: "proceed_once",
+        always: "proceed_always",
+        reject: "cancel",
+      }
+      return defaultMap[frontendOption] ?? frontendOption
+    }
+
+    // 根据前端语义在 ACP options 里找最匹配的
+    if (frontendOption === "once") {
+      return acpOptions.find(o => o.optionId === "proceed_once")?.optionId
+        ?? acpOptions.find(o => o.optionId.includes("once"))?.optionId
+        ?? acpOptions.find(o => o.kind === "allow_once")?.optionId
+        ?? acpOptions[0]?.optionId
+        ?? "proceed_once"
+    }
+    if (frontendOption === "always") {
+      return acpOptions.find(o => o.optionId === "proceed_always")?.optionId
+        ?? acpOptions.find(o => o.optionId.includes("always"))?.optionId
+        ?? acpOptions.find(o => o.kind === "allow_always")?.optionId
+        ?? acpOptions[0]?.optionId
+        ?? "proceed_always"
+    }
+    if (frontendOption === "reject") {
+      return acpOptions.find(o => o.optionId === "cancel")?.optionId
+        ?? acpOptions.find(o => o.optionId.includes("cancel") || o.optionId.includes("reject"))?.optionId
+        ?? acpOptions.find(o => o.kind === "deny")?.optionId
+        ?? "cancel"
+    }
+    return frontendOption
   }
 
   getPendingPermission(id: string): PendingPermission | undefined {

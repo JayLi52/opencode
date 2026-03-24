@@ -37,7 +37,9 @@ Agent 进程 (stdout)
 - `BRIDGE_PORT`: HTTP 服务器端口（默认：4096）
 - `WORK_DIR`: 默认工作目录
 - `ACP_ENGINE`: 引擎类型（`opencode` 或 `qwen-code`）
-- `ACP_PATH`: ACP CLI 路径
+- `ACP_PATH`: ACP CLI 路径（bridge 本地进程模式使用）
+- `ACP_COMMAND`: ACP 命令名（wss-server 和 bridge 本地进程模式使用，默认：`qwen`）
+- `ACP_ARGS`: ACP 命令参数（wss-server 使用，默认：`--acp`，空格分隔）
 - `WSS_SERVER_URL`: 远程 wss-server 的 WebSocket URL（默认：`ws://localhost:4001/ws`）
 
 ### 2. acp-wss-bridge

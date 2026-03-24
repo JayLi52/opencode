@@ -9,6 +9,11 @@
  * - 前端通过 x-opencode-directory header 告诉 bridge 当前操作的目录
  * - SSE 事件的 directory 字段必须和前端 child store key 一致
  * - 同一目录下的多个 session 共享同一个 ACP 子进程
+ *
+ * 修复记录：
+ * - [fix] POST permissions 返回值从 c.json({ ok }) 改为 c.json(ok)，SDK 期望 200: boolean
+ * - [fix] 权限回复成功后广播 permission.replied 事件，前端收到后移除 permission 弹窗
+ * - [fix] WebSocket receive 日志截断到 200 字符，避免长 JSON 刷屏
  */
 
 import { Hono } from "hono"
@@ -109,7 +114,7 @@ function createWebSocketStreams(ws: WebSocket) {
   ws.on("message", (data: WebSocket.RawData) => {
     const text = typeof data === "string" ? data : data.toString()
     const encoder = new TextEncoder()
-    console.log("[ws] receive:", text.trim())
+    console.log("[ws] receive:", text.trim().substring(0, 200))
     serverController?.enqueue(encoder.encode(text + "\n"))
   })
 
@@ -725,11 +730,25 @@ app.post("/session/:id/abort", async (c) => {
 })
 
 app.post("/session/:id/permissions/:pid", async (c) => {
+  const sessionID = c.req.param("id")
   const permID = c.req.param("pid")
   const body = await c.req.json().catch(() => ({}))
   const optionId = body.response ?? "once"
+  console.log(`[bridge] permission reply: permID=${permID}, optionId=${optionId}, body=`, JSON.stringify(body))
+  const pending = store.getPendingPermission(permID)
+  if (!pending) {
+    console.warn(`[bridge] permission ${permID} NOT FOUND in pending map! Already resolved or never created.`)
+  }
   const ok = store.resolvePendingPermission(permID, optionId)
-  return c.json({ ok })
+  console.log(`[bridge] permission resolve result: ${ok}`)
+
+  if (ok) {
+    // 广播 permission.replied 事件，前端收到后会移除 permission 弹窗
+    const sessionDir = getDirectory(sessionID)
+    broadcast(sessionDir, "permission.replied", { sessionID, requestID: permID })
+  }
+
+  return c.json(ok)
 })
 
 // ========== 启动服务器 ==========

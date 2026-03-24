@@ -1,3 +1,16 @@
+/**
+ * wss-server.ts — WebSocket ↔ stdio 代理服务器
+ *
+ * 接收 bridge 的 WebSocket 连接，启动 ACP Agent 子进程（qwen-code），
+ * 双向透传 WebSocket 消息和子进程 stdin/stdout。
+ *
+ * 修复记录：
+ * - [fix] stdout → WebSocket 增加行缓冲：Node.js stdout data 事件不保证按行分割，
+ *   长 JSON（如写文件时带完整文件内容）会被拆成多个 chunk，直接 socket.send 会导致
+ *   bridge 端收到不完整 JSON 报 "Unterminated string in JSON" 错误。
+ *   现在按 \n 分割，只发送完整的 ndjson 行。
+ */
+
 import http from "http"
 import { WebSocketServer, type WebSocket } from "ws"
 import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process"
@@ -27,14 +40,16 @@ wss.on("connection", (socket: WebSocket, req) => {
 
   console.log("[wss-server] connection received, cwd:", workDir)
 
-  // 启动 ACP 进程 - 固定使用 qwen --acp
-  const spawnCommand = "qwen"
-  const spawnArgs = ["--acp"]
+  // 启动 ACP 进程 - 从环境变量或 query 参数获取命令
+  // 支持: ACP_COMMAND 环境变量, 或 ws URL 的 ?command=xxx 参数
+  const urlObj = req.url ? new URL(req.url, "http://localhost") : null
+  const spawnCommand = urlObj?.searchParams.get("command") ?? process.env.ACP_COMMAND ?? "qwen"
+  const spawnArgs = process.env.ACP_ARGS ? process.env.ACP_ARGS.split(" ") : ["--acp"]
   const options: SpawnOptions = {
     cwd: workDir,
     stdio: ["pipe", "pipe", "pipe"],
     env: { ...process.env },
-    shell: true, // macOS 需要这个来找到 qwen 命令
+    shell: true, // 使用系统默认 shell，兼容 macOS/Linux
   }
 
   console.log("[wss-server] spawning:", spawnCommand, spawnArgs.join(" "), "cwd:", workDir)
@@ -72,11 +87,21 @@ wss.on("connection", (socket: WebSocket, req) => {
     child?.stdin?.write(text + "\n")
   })
 
-  // stdout → WebSocket
+  // stdout → WebSocket（行缓冲，确保每次发送完整的 ndjson 行）
+  // Node.js stdout 的 data 事件不保证按行分割，长 JSON 可能被拆成多个 chunk
+  // 必须按 \n 分割，只发送完整的行，否则 bridge 端 JSON.parse 会报错
+  let stdoutBuffer = ""
   child.stdout?.on("data", (buf: Buffer) => {
-    const msg = buf.toString()
-    console.log("[qwen-acp stdout]", msg.trim())
-    socket.send(msg)
+    stdoutBuffer += buf.toString()
+    const lines = stdoutBuffer.split("\n")
+    // 最后一个元素可能是不完整的行，留在 buffer 里
+    stdoutBuffer = lines.pop() ?? ""
+    for (const line of lines) {
+      if (line.trim()) {
+        console.log("[qwen-acp stdout]", line.trim().substring(0, 200))
+        socket.send(line)
+      }
+    }
   })
 
   socket.on("close", () => {
