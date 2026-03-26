@@ -53,6 +53,10 @@ export class OpencodeAcpBridge {
   private sessionId: string | null = null
   private ws: WebSocket | null = null
 
+  // ACP agent 返回的 model 信息
+  public currentModelId: string | null = null
+  public availableModels: Array<{ modelId: string; name?: string }> = []
+
   // 可注入的权限处理器，默认自动批准
   public onPermission: PermissionHandler = async (params) => {
     const options = params.options ?? []
@@ -261,6 +265,15 @@ export class OpencodeAcpBridge {
       mcpServers: [],
     } as any)
     this.sessionId = res.sessionId
+    
+    // 提取 model 信息
+    const models = (res as any).models as { currentModelId?: string; availableModels?: Array<{ modelId: string; name?: string }> } | null
+    if (models?.currentModelId) {
+      this.currentModelId = models.currentModelId
+      this.availableModels = models.availableModels ?? []
+      console.log("[acp-bridge] ACP session model:", this.currentModelId, "available:", this.availableModels.map(m => m.modelId))
+    }
+    
     console.log("[acp-bridge] ACP session created:", res.sessionId)
     return res.sessionId
   }

@@ -23,6 +23,7 @@ import { addSseClient, broadcast, getSseClientCount } from "./sse.js"
 import { store } from "./store.js"
 import { handleAcpUpdate, handleAcpPermission } from "./eventConverter.js"
 import { OpencodeAcpBridge, type EngineType } from "./acp-wss-bridge.js"
+import { loadCommands, renderTemplate, type CommandInfo } from "./commandLoader.js"
 import { createServer } from "http"
 import { WebSocketServer, WebSocket } from "ws"
 import { serve } from "@hono/node-server"
@@ -50,10 +51,21 @@ function getDirectory(sessionID?: string): string {
 }
 
 /**
- * 从请求 header 中提取 directory（请求级别，不污染全局状态）
- * 前端 SDK 每个请求都带 x-opencode-directory header
+ * 从请求 header 或 query parameter 中提取 directory（请求级别，不污染全局状态）
+ * 前端 SDK 每个请求都带 x-opencode-directory header，
+ * 但 session.list 等接口会把 directory 放在 query parameter 里
  */
-function getRequestDirectory(c: { req: { header: (name: string) => string | undefined } }): string {
+function getRequestDirectory(c: { req: { header: (name: string) => string | undefined; query: (name: string) => string | undefined } }): string {
+  // 优先从 query parameter 取（SDK session.list 等接口用 query param）
+  const queryDir = c.req.query("directory")
+  if (queryDir) {
+    try {
+      return decodeURIComponent(queryDir)
+    } catch {
+      return queryDir
+    }
+  }
+  // 再从 header 取
   const raw = c.req.header("x-opencode-directory")
   if (raw) {
     try {
@@ -437,6 +449,53 @@ const BRIDGE_MODEL = {
 }
 
 app.get("/provider", (c) => {
+  // 尝试从当前活跃的 bridge 获取真实 model 信息
+  const dir = getRequestDirectory(c)
+  const bridge = bridges.get(dir)
+  
+  if (bridge && bridge.currentModelId) {
+    const models: Record<string, any> = {}
+    for (const m of bridge.availableModels) {
+      models[m.modelId] = {
+        id: m.modelId,
+        name: m.name ?? m.modelId,
+        release_date: "2026-01-01",
+        attachment: false,
+        reasoning: false,
+        temperature: false,
+        tool_call: true,
+        limit: { context: 128000, output: 8192 },
+        options: {},
+      }
+    }
+    // 确保当前 model 在列表里
+    if (!models[bridge.currentModelId]) {
+      models[bridge.currentModelId] = {
+        id: bridge.currentModelId,
+        name: bridge.currentModelId,
+        release_date: "2026-01-01",
+        attachment: false,
+        reasoning: false,
+        temperature: false,
+        tool_call: true,
+        limit: { context: 128000, output: 8192 },
+        options: {},
+      }
+    }
+    return c.json({
+      all: [
+        {
+          id: "bridge",
+          name: `Bridge Agent (${currentEngine})`,
+          env: [],
+          models,
+        },
+      ],
+      connected: ["bridge"],
+      default: { bridge: bridge.currentModelId },
+    })
+  }
+
   return c.json({
     all: [
       {
@@ -499,7 +558,38 @@ app.get("/experimental/agents", (c) => c.json(AGENTS))
 
 // ========== 空路由（前端会调用但不影响核心功能）==========
 
-app.get("/command", (c) => c.json([]))
+// ========== 命令和技能路由 ==========
+
+// 缓存已加载的 command 列表（directory → commands），避免每次请求都扫描磁盘
+const commandCache = new Map<string, { commands: CommandInfo[]; loadedAt: number }>()
+const COMMAND_CACHE_TTL = 30_000 // 30 秒缓存
+
+async function getCommands(directory: string): Promise<CommandInfo[]> {
+  const cached = commandCache.get(directory)
+  if (cached && Date.now() - cached.loadedAt < COMMAND_CACHE_TTL) {
+    return cached.commands
+  }
+  const commands = await loadCommands(directory)
+  commandCache.set(directory, { commands, loadedAt: Date.now() })
+  console.log(`[bridge] loaded ${commands.length} commands/skills from ${directory}`)
+  return commands
+}
+
+app.get("/command", async (c) => {
+  const dir = getRequestDirectory(c)
+  console.log(`[bridge] /command request, directory=${dir}`)
+  const commands = await getCommands(dir)
+  return c.json(commands)
+})
+
+app.get("/skill", async (c) => {
+  const dir = getRequestDirectory(c)
+  const commands = await getCommands(dir)
+  return c.json(commands.filter((cmd) => cmd.source === "skill"))
+})
+
+// ========== 空路由（前端会调用但不影响核心功能）==========
+
 app.get("/vcs", (c) => c.json({ branch: "main" }))
 app.get("/permission", (c) => c.json([]))
 app.get("/question", (c) => c.json([]))
@@ -509,7 +599,6 @@ app.get("/lsp", (c) => c.json([]))
 app.get("/experimental/lsp", (c) => c.json([]))
 app.get("/experimental/session", (c) => c.json(store.listSessions(getRequestDirectory(c)).map(makeSessionInfo)))
 app.get("/session/status", (c) => c.json({}))
-app.get("/skill", (c) => c.json([]))
 app.post("/log", (c) => c.json({ ok: true }))
 
 // ========== 文件系统路由 ==========
@@ -595,6 +684,30 @@ app.get("/find/file", async (c) => {
 })
 
 // ========== 会话路由 ==========
+
+/**
+ * 从用户消息中生成简短标题
+ * 截取前 50 个字符，去掉换行，作为 session 标题
+ */
+function generateTitleFromMessage(text: string): string {
+  const cleaned = text.replace(/\n+/g, " ").trim()
+  if (!cleaned) return "New Session"
+  return cleaned.length > 50 ? cleaned.substring(0, 47) + "..." : cleaned
+}
+
+/**
+ * 如果 session 标题还是默认的 "New Session"，用第一条消息自动更新标题
+ */
+function autoUpdateSessionTitle(sessionID: string, text: string, directory: string) {
+  const session = store.getSession(sessionID)
+  if (!session) return
+  // 只在标题是默认值时自动更新（包括引擎切换时创建的 "New Session (xxx)"）
+  if (!session.title.startsWith("New Session")) return
+  const title = generateTitleFromMessage(text)
+  if (title === "New Session") return
+  store.updateSessionTitle(sessionID, title)
+  broadcast(directory, "session.updated", { info: makeSessionInfo(session) })
+}
 
 // 把 store 的 SessionInfo 转成前端 SDK 期望的 Session 格式
 function makeSessionInfo(s: import("./store.js").SessionInfo) {
@@ -708,6 +821,84 @@ app.delete("/session/:id", (c) => {
   return c.json({ ok: true })
 })
 
+// 执行命令（slash command）— 渲染模板后当 prompt 发给 agent
+app.post("/session/:id/command", async (c) => {
+  const sessionID = c.req.param("id")
+  const body = await c.req.json().catch(() => ({}))
+  const dir = getRequestDirectory(c)
+  const commandName: string = body.command ?? ""
+  const args: string = body.arguments ?? ""
+
+  const commands = await getCommands(dir)
+  const cmd = commands.find((cmd) => cmd.name === commandName)
+  if (!cmd) {
+    return c.json({ error: `Command "${commandName}" not found` }, 404)
+  }
+
+  // 确保 session 存在
+  const existingSession = store.getSession(sessionID)
+  if (!existingSession) {
+    store.createSessionWithId(sessionID, { directory: dir })
+  }
+  sessionDirectory.set(sessionID, dir)
+  touchProject(dir)
+
+  const sessionDir = getDirectory(sessionID)
+
+  // 渲染模板：替换变量、执行 shell 命令
+  let renderedText: string
+  try {
+    renderedText = await renderTemplate(cmd.template, args, sessionDir)
+  } catch (err: any) {
+    console.error(`[bridge] command render error:`, err)
+    return c.json({ error: `Failed to render command: ${err.message}` }, 500)
+  }
+
+  console.log(`[bridge] command /${commandName} rendered (${renderedText.length} chars)`)
+
+  // 当作普通用户消息发送
+  const userMsg = store.addUserMessage(sessionID, renderedText, body.model ? { providerID: "bridge", modelID: "bridge-agent" } : undefined)
+
+  // 自动更新 session 标题（用命令名作为标题）
+  autoUpdateSessionTitle(sessionID, `/${commandName} ${args}`.trim(), sessionDir)
+
+  broadcast(sessionDir, "message.updated", {
+    info: {
+      id: userMsg.info.id,
+      sessionID,
+      role: "user",
+      time: userMsg.info.time,
+      agent: body.agent ?? "coder",
+      model: body.model ?? { providerID: "bridge", modelID: "bridge-agent" },
+    },
+  })
+  for (const part of userMsg.parts) {
+    broadcast(sessionDir, "message.part.updated", { part })
+  }
+  broadcast(sessionDir, "session.status", { sessionID, status: { type: "busy" } })
+
+  // 广播 command.executed 事件
+  broadcast(sessionDir, "command.executed", { name: commandName, sessionID, arguments: args })
+
+  ;(async () => {
+    try {
+      const bridge = bridges.get(sessionDir)
+      if (!bridge) throw new Error(`Bridge not found for directory: ${sessionDir}`)
+      await bridge.prompt(renderedText)
+      const msg = store.getCurrentAssistantMsg(sessionID)
+      if (msg) {
+        store.completeAssistantMessage(sessionID, "end_turn")
+        broadcast(sessionDir, "session.status", { sessionID, status: { type: "idle" } })
+      }
+    } catch (err) {
+      console.error("[bridge] command prompt error:", err)
+      broadcast(sessionDir, "session.status", { sessionID, status: { type: "idle" } })
+    }
+  })()
+
+  return c.json({ ok: true })
+})
+
 // 发送消息（异步）— 核心接口
 app.post("/session/:id/prompt_async", async (c) => {
   const sessionID = c.req.param("id")
@@ -733,6 +924,9 @@ app.post("/session/:id/prompt_async", async (c) => {
     .join("\n")
 
   const userMsg = store.addUserMessage(sessionID, text, body.model, body.messageID)
+
+  // 自动更新 session 标题（第一条消息时）
+  autoUpdateSessionTitle(sessionID, text, sessionDir)
 
   // 广播用户消息和 parts — 用 sessionDir 确保和前端 child store 一致
   broadcast(sessionDir, "message.updated", {
