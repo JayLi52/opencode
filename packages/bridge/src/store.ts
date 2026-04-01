@@ -126,6 +126,17 @@ class BridgeStore {
   // toolCallId → partId 映射
   private toolCallPartMap = new Map<string, string>()
 
+  // 用户选择的 model 配置（per-directory）
+  private selectedModel = new Map<string, string>() // directory → "providerID/modelID"
+
+  setSelectedModel(directory: string, model: string) {
+    this.selectedModel.set(directory, model)
+  }
+
+  getSelectedModel(directory: string): string | undefined {
+    return this.selectedModel.get(directory)
+  }
+
   // ---- 会话管理 ----
 
   createSession(opts: { directory: string; model?: { providerID: string; modelID: string }; agent?: string; title?: string }): SessionInfo {

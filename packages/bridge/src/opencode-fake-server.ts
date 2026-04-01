@@ -277,6 +277,18 @@ async function getOrCreateBridge(sessionID: string, directory: string, ws?: WebS
   await bridge.start()
   await bridge.newSession()
   bridges.set(directory, bridge)
+
+  // 如果用户之前选过 model，恢复选择
+  const previousModel = store.getSelectedModel(directory)
+  if (previousModel) {
+    const modelId = previousModel.includes("/") ? previousModel.split("/").slice(1).join("/") : previousModel
+    if (modelId && modelId !== "bridge-agent" && modelId !== bridge.currentModelId) {
+      bridge.setModel(modelId).catch((err) => {
+        console.warn("[bridge] failed to restore previous model selection:", err)
+      })
+    }
+  }
+
   return bridge
 }
 
@@ -344,6 +356,9 @@ app.post("/engine/switch", async (c) => {
     broadcast(dir, "engine.switched", { engine: currentEngine })
   }
 
+  // 广播 server.connected 触发前端 re-bootstrap（重新拉 provider/config 等）
+  broadcast("global", "server.connected", {})
+
   // 为当前活跃目录自动创建新 session
   const dir = getRequestDirectory(c)
   touchProject(dir)
@@ -362,6 +377,53 @@ app.post("/engine/switch", async (c) => {
   broadcast(dir, "session.updated", { info: sessionData })
 
   return c.json({ engine: currentEngine, changed: true, session: sessionData })
+})
+
+// ========== Model 切换 ==========
+
+// 获取当前 model 信息和可用 model 列表
+app.get("/model", (c) => {
+  const dir = getRequestDirectory(c)
+  const bridge = bridges.get(dir)
+  const selected = store.getSelectedModel(dir)
+  return c.json({
+    currentModelId: bridge?.currentModelId ?? null,
+    selectedModel: selected ?? null,
+    availableModels: bridge?.availableModels ?? [],
+    engine: currentEngine,
+  })
+})
+
+// 切换 model（bridge 独有接口，比 PATCH /config 更直接）
+app.post("/model/switch", async (c) => {
+  const body = await c.req.json().catch(() => ({}))
+  const dir = getRequestDirectory(c)
+  const modelId = body.modelId as string
+  if (!modelId) {
+    return c.json({ error: "modelId is required" }, 400)
+  }
+
+  const bridge = bridges.get(dir)
+  if (!bridge) {
+    return c.json({ error: "no active bridge for this directory" }, 404)
+  }
+
+  const ok = await bridge.setModel(modelId)
+  if (!ok) {
+    return c.json({ error: "failed to set model, agent may not support session/set_model" }, 500)
+  }
+
+  // 更新 store 中的选择
+  store.setSelectedModel(dir, `bridge/${modelId}`)
+
+  // 广播 provider 更新让前端刷新
+  broadcast(dir, "provider.updated", {})
+
+  return c.json({
+    changed: true,
+    currentModelId: bridge.currentModelId,
+    availableModels: bridge.availableModels,
+  })
 })
 
 // ========== 全局路由 ==========
@@ -449,16 +511,26 @@ const BRIDGE_MODEL = {
 }
 
 app.get("/provider", (c) => {
-  // 尝试从当前活跃的 bridge 获取真实 model 信息
   const dir = getRequestDirectory(c)
-  const bridge = bridges.get(dir)
+  // 优先查当前 directory 的 bridge，找不到就遍历所有 bridge 找有 model 信息的
+  let bridge = bridges.get(dir)
+  if (!bridge || bridge.availableModels.length === 0) {
+    for (const [, b] of bridges) {
+      if (b.availableModels.length > 0) {
+        bridge = b
+        break
+      }
+    }
+  }
   
-  if (bridge && bridge.currentModelId) {
+  // 从 bridge 获取 ACP Agent 返回的真实 model 列表
+  if (bridge && bridge.availableModels.length > 0) {
     const models: Record<string, any> = {}
     for (const m of bridge.availableModels) {
       models[m.modelId] = {
         id: m.modelId,
         name: m.name ?? m.modelId,
+        family: m.modelId, // 每个 model 独立 family，确保前端 visible() 不会过滤
         release_date: "2026-01-01",
         attachment: false,
         reasoning: false,
@@ -469,10 +541,12 @@ app.get("/provider", (c) => {
       }
     }
     // 确保当前 model 在列表里
-    if (!models[bridge.currentModelId]) {
-      models[bridge.currentModelId] = {
-        id: bridge.currentModelId,
-        name: bridge.currentModelId,
+    const currentId = bridge.currentModelId ?? bridge.availableModels[0]?.modelId
+    if (currentId && !models[currentId]) {
+      models[currentId] = {
+        id: currentId,
+        name: currentId,
+        family: currentId,
         release_date: "2026-01-01",
         attachment: false,
         reasoning: false,
@@ -492,7 +566,7 @@ app.get("/provider", (c) => {
         },
       ],
       connected: ["bridge"],
-      default: { bridge: bridge.currentModelId },
+      default: { bridge: currentId ?? "bridge-agent" },
     })
   }
 
@@ -515,15 +589,68 @@ app.get("/provider/auth", (c) => c.json({}))
 // ========== 配置路由 ==========
 
 app.get("/config", (c) => {
+  const dir = getRequestDirectory(c)
+  const selected = store.getSelectedModel(dir)
+  // 查找 bridge：优先当前 directory，fallback 到任意活跃 bridge
+  let bridge = bridges.get(dir)
+  if (!bridge) {
+    for (const [, b] of bridges) {
+      if (b.currentModelId) { bridge = b; break }
+    }
+  }
+  // 优先用用户选择的 model，其次用 bridge 当前的 model
+  const model = selected ?? (bridge?.currentModelId ? `bridge/${bridge.currentModelId}` : "bridge/bridge-agent")
   return c.json({
     autoshare: false,
     autoupdate: false,
     disabled_providers: [],
-    model: "bridge/bridge-agent",
+    model,
   })
 })
 
-app.patch("/config", async (c) => c.json({}))
+app.patch("/config", async (c) => {
+  const body = await c.req.json().catch(() => ({}))
+  const dir = getRequestDirectory(c)
+
+  if (body.model && typeof body.model === "string") {
+    // 前端发来的格式是 "providerID/modelID"，例如 "bridge/qwen-max"
+    store.setSelectedModel(dir, body.model)
+    
+    // 提取 modelId（去掉 "bridge/" 前缀）
+    const modelId = body.model.includes("/") ? body.model.split("/").slice(1).join("/") : body.model
+    
+    // 查找 bridge：优先当前 directory，fallback 到任意活跃 bridge
+    let bridge = bridges.get(dir)
+    if (!bridge) {
+      for (const [, b] of bridges) {
+        if (b.currentModelId) { bridge = b; break }
+      }
+    }
+    if (bridge) {
+      const ok = await bridge.setModel(modelId)
+      if (ok) {
+        console.log(`[bridge] model switched to: ${modelId}`)
+        broadcast(dir, "provider.updated", {})
+      }
+    }
+  }
+
+  // 返回更新后的 config
+  const selected = store.getSelectedModel(dir)
+  let bridge = bridges.get(dir)
+  if (!bridge) {
+    for (const [, b] of bridges) {
+      if (b.currentModelId) { bridge = b; break }
+    }
+  }
+  const model = selected ?? (bridge?.currentModelId ? `bridge/${bridge.currentModelId}` : "bridge/bridge-agent")
+  return c.json({
+    autoshare: false,
+    autoupdate: false,
+    disabled_providers: [],
+    model,
+  })
+})
 app.get("/config/providers", (c) => c.json([]))
 
 // ========== 项目路由 ==========
@@ -888,8 +1015,8 @@ app.post("/session/:id/command", async (c) => {
       const msg = store.getCurrentAssistantMsg(sessionID)
       if (msg) {
         store.completeAssistantMessage(sessionID, "end_turn")
-        broadcast(sessionDir, "session.status", { sessionID, status: { type: "idle" } })
       }
+      broadcast(sessionDir, "session.status", { sessionID, status: { type: "idle" } })
     } catch (err) {
       console.error("[bridge] command prompt error:", err)
       broadcast(sessionDir, "session.status", { sessionID, status: { type: "idle" } })
@@ -951,12 +1078,20 @@ app.post("/session/:id/prompt_async", async (c) => {
       if (!bridge) {
         throw new Error(`Bridge not found for directory: ${sessionDir}`)
       }
+      // 如果前端选了不同的 model，先切换
+      if (body.model?.modelID && body.model.modelID !== "bridge-agent") {
+        const targetModelId = body.model.modelID
+        if (targetModelId !== bridge.currentModelId) {
+          await bridge.setModel(targetModelId)
+        }
+      }
       await bridge.prompt(text)
       const msg = store.getCurrentAssistantMsg(sessionID)
       if (msg) {
         store.completeAssistantMessage(sessionID, "end_turn")
-        broadcast(sessionDir, "session.status", { sessionID, status: { type: "idle" } })
       }
+      // 无论如何都广播 idle，确保前端不会卡在 busy 状态
+      broadcast(sessionDir, "session.status", { sessionID, status: { type: "idle" } })
     } catch (err) {
       console.error("[bridge] prompt error:", err)
       broadcast(sessionDir, "session.status", { sessionID, status: { type: "idle" } })

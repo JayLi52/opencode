@@ -278,6 +278,27 @@ export class OpencodeAcpBridge {
     return res.sessionId
   }
 
+  async setModel(modelId: string): Promise<boolean> {
+    const conn = this.ensure()
+    if (!this.sessionId) {
+      console.warn("[acp-bridge] setModel called but no active session")
+      return false
+    }
+    try {
+      console.log("[acp-bridge] setting model:", modelId)
+      await conn.unstable_setSessionModel({
+        sessionId: this.sessionId,
+        modelId,
+      })
+      this.currentModelId = modelId
+      console.log("[acp-bridge] model set OK:", modelId)
+      return true
+    } catch (err: any) {
+      console.error("[acp-bridge] setModel failed:", err.message ?? err)
+      return false
+    }
+  }
+
   async prompt(text: string): Promise<PromptResponse> {
     const conn = this.ensure()
     if (!this.sessionId) throw new RequestError(-32600, "No active ACP session")
