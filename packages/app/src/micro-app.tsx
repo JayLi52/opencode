@@ -51,7 +51,7 @@ export function mount(props: { container: Element }) {
 
   const server: ServerConnection.Http = {
     type: "http",
-    http: { url: serverUrl },
+    http: { url: bridgeUrl },
   }
 
   dispose = render(
@@ -59,7 +59,7 @@ export function mount(props: { container: Element }) {
       <PlatformProvider value={platform}>
         <AppBaseProviders>
           <AppInterface
-            defaultServer={ServerConnection.Key.make(serverUrl)}
+            defaultServer={ServerConnection.Key.make(bridgeUrl)}
             servers={[server]}
             disableHealthCheck
           />
