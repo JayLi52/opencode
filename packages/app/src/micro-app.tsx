@@ -42,9 +42,16 @@ let dispose: (() => void) | null = null
 export function mount(props: { container: Element }) {
   props.container.classList.add("opencode-micro-app")
 
+  // bridge URL 配置:
+  // - 本地开发: localhost:4096
+  // - 生产环境(ingress): /opencode/api
+  // 可通过 window.__OPENCODE_BRIDGE_URL__ 覆盖
+  const defaultBridgeUrl = isInIcestark() ? "/opencode/api" : "http://localhost:4096"
+  const bridgeUrl = (globalThis as any).__OPENCODE_BRIDGE_URL__ ?? defaultBridgeUrl
+
   const server: ServerConnection.Http = {
     type: "http",
-    http: { url: location.origin },
+    http: { url: serverUrl },
   }
 
   dispose = render(
@@ -52,7 +59,7 @@ export function mount(props: { container: Element }) {
       <PlatformProvider value={platform}>
         <AppBaseProviders>
           <AppInterface
-            defaultServer={ServerConnection.Key.make(location.origin)}
+            defaultServer={ServerConnection.Key.make(serverUrl)}
             servers={[server]}
             disableHealthCheck
           />

@@ -1,0 +1,115 @@
+# 多阶段构建 Dockerfile
+# - 构建 packages/app 微应用
+# - 构建 packages/bridge
+# - 复制 wss-server
+# 最终镜像包含所有组件
+
+FROM node:20-slim AS builder
+
+WORKDIR /app
+
+# 安装 bun
+RUN npm install -g bun
+
+# 复制整个项目
+COPY . .
+
+# 构建 packages/app 微应用
+RUN cd packages/app && \
+    BUILD_MODE=micro-app VITE_BASE_PATH=/opencode/app bunx vite build
+
+# 安装 bridge 依赖
+RUN cd packages/bridge && bun install
+
+# 构建 wss-server
+RUN cd packages/opencode-qwen-acp-demo && \
+    bun install && \
+    bun run build
+
+
+# 运行时镜像
+FROM node:20-alpine
+
+WORKDIR /app
+
+# 安装必要的工具
+RUN apk add --no-cache curl
+
+# 复制构建产物
+COPY --from=builder /app/packages/app/dist ./app-dist
+
+# 复制 bridge（源码 + 依赖）
+COPY --from=builder /app/packages/bridge/src ./bridge-src
+COPY --from=builder /app/packages/bridge/node_modules ./bridge-node_modules
+COPY --from=builder /app/packages/bridge/package.json ./bridge-package.json
+
+# 复制 wss-server
+COPY --from=builder /app/packages/opencode-qwen-acp-demo/dist ./wss-dist
+COPY --from=builder /app/packages/opencode-qwen-acp-demo/node_modules ./wss-node_modules
+
+# 创建工作目录
+RUN mkdir -p /workspace
+
+# 安装静态文件服务器（http-server）和 tsx（运行 TypeScript）
+RUN npm install -g http-server tsx
+
+# 暴露端口
+# 3000: 微应用静态文件服务
+# 4001: wss-server 对外暴露（通过 ingress /ws）
+# 4096: bridge 对外暴露（通过 ingress /api）
+EXPOSE 3000 4001 4096
+
+# 环境变量
+ENV BRIDGE_PORT=4096
+ENV WORK_DIR=/workspace
+ENV NODE_ENV=production
+ENV ACP_COMMAND=qwen
+ENV ACP_ARGS=--acp
+
+# 启动脚本
+RUN <<'EOF'
+cat > /app/start.sh <<'START_SCRIPT'
+#!/bin/sh
+set -e
+
+# 启动 bridge
+# 使用 tsx 运行 TypeScript 源码
+echo "Starting bridge on port $BRIDGE_PORT..."
+cd /app && NODE_PATH=/app/bridge-node_modules tsx bridge-src/index.ts > /tmp/bridge.log 2>&1 &
+BRIDGE_PID=$!
+
+# 启动 wss-server
+echo "Starting wss-server on port 4001..."
+cd /app && node wss-dist/server.js > /tmp/wss-server.log 2>&1 &
+WSS_PID=$!
+
+# 等待 bridge 启动
+sleep 2
+
+# 启动静态文件服务器（微应用）
+echo "Starting static server on port 3000..."
+http-server app-dist \
+  -p 3000 \
+  -c-1 \
+  -H "Access-Control-Allow-Origin:*" \
+  -H "Access-Control-Allow-Methods:GET,POST,PUT,DELETE,OPTIONS" \
+  -H "Access-Control-Allow-Headers:Content-Type" \
+  > /tmp/static.log 2>&1 &
+STATIC_PID=$!
+
+echo "All services started:"
+echo "  - Bridge: http://localhost:$BRIDGE_PORT"
+echo "  - WSS Server: http://localhost:4001/ws"
+echo "  - Static Server: http://localhost:3000"
+
+# 等待所有进程
+wait $BRIDGE_PID $WSS_PID $STATIC_PID
+START_SCRIPT
+chmod +x /app/start.sh
+EOF
+
+# 健康检查
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+  CMD curl -f http://localhost:$BRIDGE_PORT/global/health || exit 1
+
+ENTRYPOINT ["/app/start.sh"]

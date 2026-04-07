@@ -4,7 +4,7 @@ import desktopPlugin from "./vite"
 const isMicroApp = process.env.BUILD_MODE === "micro-app"
 
 export default defineConfig({
-  base: isMicroApp ? "http://localhost:3000/" : "/",
+  base: isMicroApp ? process.env.VITE_BASE_PATH ?? "/" : "/",
   define: {
     'process.env.NODE_ENV': JSON.stringify('production'),
     'process.platform': JSON.stringify('browser'),
@@ -34,8 +34,10 @@ export default defineConfig({
               entryFileNames: 'index.js',
               chunkFileNames: '[name]-[hash].js',
               paths: (id) => {
+                // 确保微应用内部模块引用使用正确的路径前缀
                 if (id.startsWith('./') || id.startsWith('../')) {
-                  return `http://localhost:3000/${id.replace(/^\.\//, '')}`
+                  const basePath = process.env.VITE_BASE_PATH?.replace(/\/$/, '') ?? ''
+                  return `${basePath}/${id.replace(/^\.\//, '')}`
                 }
                 return id
               },

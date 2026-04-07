@@ -81,8 +81,9 @@ echo ""
 # 启动 wss-server (ACP WebSocket 代理)
 echo -e "${GREEN}启动 wss-server (Qwen-ACP) on http://localhost:5001${NC}"
 cd /Users/terry/work/opencode/packages/opencode-qwen-acp-demo
-PORT=5001 bunx tsx src/wss-server.ts > /tmp/wss-server.log 2>&1 &
+nohup env PORT=5001 bunx tsx src/wss-server.ts > /tmp/wss-server.log 2>&1 &
 WSS_PID=$!
+disown $WSS_PID
 echo "wss-server PID: $WSS_PID"
 sleep 2
 
@@ -96,8 +97,9 @@ echo ""
 # 启动 bridge (连接 wss-server)
 echo -e "${GREEN}启动 bridge on http://localhost:4096${NC}"
 cd /Users/terry/work/opencode/packages/bridge
-BRIDGE_PORT=4096 WSS_SERVER_URL=ws://localhost:5001/ws bunx tsx src/index.ts > /tmp/bridge.log 2>&1 &
+nohup env BRIDGE_PORT=4096 WSS_SERVER_URL=ws://localhost:5001/ws bunx tsx src/index.ts > /tmp/bridge.log 2>&1 &
 BRIDGE_PID=$!
+disown $BRIDGE_PID
 echo "bridge PID: $BRIDGE_PID"
 sleep 2
 
@@ -111,8 +113,9 @@ echo ""
 # 启动微应用静态服务器
 echo -e "${GREEN}启动微应用静态服务器 on http://localhost:3000${NC}"
 cd /Users/terry/work/opencode/packages/app/dist
-bunx serve -l 3000 --cors > /tmp/micro-app.log 2>&1 &
+nohup bunx serve -l 3000 --cors > /tmp/micro-app.log 2>&1 &
 MICRO_PID=$!
+disown $MICRO_PID
 echo "微应用 PID: $MICRO_PID"
 
 # 等待微应用启动
@@ -130,8 +133,9 @@ echo ""
 # 启动主应用
 echo -e "${GREEN}启动主应用 (Icestark) on http://localhost:4001${NC}"
 cd /Users/terry/work/opencode/test-icestark-main
-bunx vite --port 4001 --host > /tmp/main-app.log 2>&1 &
+nohup bunx vite --port 4001 --host > /tmp/main-app.log 2>&1 &
 MAIN_PID=$!
+disown $MAIN_PID
 echo "主应用 PID: $MAIN_PID"
 
 # 等待主应用启动
