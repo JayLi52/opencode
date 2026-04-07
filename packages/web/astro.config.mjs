@@ -9,12 +9,15 @@ import { rehypeHeadingIds } from "@astrojs/markdown-remark"
 import rehypeAutolinkHeadings from "rehype-autolink-headings"
 import { spawnSync } from "child_process"
 
+// 检测是否为微应用构建模式
+const isMicroApp = process.env.BUILD_MODE === 'micro-app'
+
 // https://astro.build/config
 export default defineConfig({
   site: config.url,
-  base: "/docs",
-  output: "server",
-  adapter: cloudflare({
+  base: isMicroApp ? "/" : "/docs",
+  output: isMicroApp ? "static" : "server",
+  adapter: isMicroApp ? undefined : cloudflare({
     imageService: "passthrough",
   }),
   devToolbar: {
@@ -26,7 +29,10 @@ export default defineConfig({
   markdown: {
     rehypePlugins: [rehypeHeadingIds, [rehypeAutolinkHeadings, { behavior: "wrap" }]],
   },
-  build: {},
+  build: {
+    format: isMicroApp ? 'file' : 'directory',
+    assets: 'assets',
+  },
   integrations: [
     configSchema(),
     solidJs(),

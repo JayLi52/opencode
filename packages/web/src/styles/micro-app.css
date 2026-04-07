@@ -1,0 +1,39 @@
+/* 微应用命名空间，避免样式污染 */
+.opencode-web-micro-app {
+  /* 基础样式重置 */
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  line-height: 1.5;
+  color: inherit;
+}
+
+/* 确保样式只在微应用容器内生效 */
+.opencode-web-micro-app :where(*) {
+  box-sizing: border-box;
+}
+
+/* 防止微应用影响全局滚动 */
+.opencode-web-micro-app #opencode-web-content {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0, 0, 0, 0.2) transparent;
+}
+
+.opencode-web-micro-app #opencode-web-content::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.opencode-web-micro-app #opencode-web-content::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.opencode-web-micro-app #opencode-web-content::-webkit-scrollbar-thumb {
+  background-color: rgba(0, 0, 0, 0.2);
+  border-radius: 4px;
+}
+
+/* 暗黑模式适配 */
+@media (prefers-color-scheme: dark) {
+  .opencode-web-micro-app #opencode-web-content::-webkit-scrollbar-thumb {
+    background-color: rgba(255, 255, 255, 0.2);
+  }
+}

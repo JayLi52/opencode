@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OpenCode Web</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    html, body, #app {
+      width: 100%;
+      height: 100%;
+    }
+    #app {
+      overflow: auto;
+    }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+  
+  <!-- 微应用生命周期脚本 -->
+  <script type="module">
+    import { isInIcestark, setLibraryName } from '@ice/stark-app';
+    import { render, dispose } from './src/app.ts';
+    
+    // 设置库名称
+    setLibraryName('OpenCodeWeb');
+    
+    // 导出生命周期函数
+    export function mount(props) {
+      const { container } = props;
+      if (container) {
+        container.classList.add('opencode-web-micro-app');
+        render(container);
+      }
+    }
+    
+    export function unmount(props) {
+      const { container } = props;
+      if (container) {
+        dispose(container);
+        container.classList.remove('opencode-web-micro-app');
+      }
+    }
+    
+    // 独立运行模式
+    if (!isInIcestark()) {
+      const container = document.getElementById('app');
+      if (container) {
+        container.classList.add('opencode-web-micro-app');
+        render(container);
+      }
+    }
+  </script>
+</body>
+</html>
