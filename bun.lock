@@ -28,6 +28,7 @@
       "name": "@opencode-ai/app",
       "version": "1.2.27",
       "dependencies": {
+        "@ice/stark-app": "^1.5.0",
         "@kobalte/core": "catalog:",
         "@opencode-ai/sdk": "workspace:*",
         "@opencode-ai/ui": "workspace:*",
@@ -1173,6 +1174,8 @@
     "@ibm/plex": ["@ibm/plex@6.4.1", "https://registry.npmmirror.com/@ibm/plex/-/plex-6.4.1.tgz", { "dependencies": { "@ibm/telemetry-js": "^1.5.1" } }, "sha512-fnsipQywHt3zWvsnlyYKMikcVI7E2fEwpiPnIHFqlbByXVfQfANAAeJk1IV4mNnxhppUIDlhU0TzwYwL++Rn2g=="],
 
     "@ibm/telemetry-js": ["@ibm/telemetry-js@1.11.0", "https://registry.npmmirror.com/@ibm/telemetry-js/-/telemetry-js-1.11.0.tgz", { "bin": { "ibmtelemetry": "dist/collect.js" } }, "sha512-RO/9j+URJnSfseWg9ZkEX9p+a3Ousd33DBU7rOafoZB08RqdzxFVYJ2/iM50dkBuD0o7WX7GYt1sLbNgCoE+pA=="],
+
+    "@ice/stark-app": ["@ice/stark-app@1.5.0", "https://registry.anpm.alibaba-inc.com/@ice/stark-app/-/stark-app-1.5.0.tgz", {}, "sha512-9fuCri48eZj6TnfPkCju4vVLhGurz+mt6lFx4JQFHhnRBQ5MuiBqRZg5F/3vdnJ7dAYQJlCXmHlQtBHok82z+g=="],
 
     "@img/sharp-darwin-arm64": ["@img/sharp-darwin-arm64@0.33.5", "https://registry.npmmirror.com/@img/sharp-darwin-arm64/-/sharp-darwin-arm64-0.33.5.tgz", { "optionalDependencies": { "@img/sharp-libvips-darwin-arm64": "1.0.4" }, "os": "darwin", "cpu": "arm64" }, "sha512-UT4p+iz/2H4twwAoLCqfA9UH5pI6DggwKEGuaPy7nCVQ8ZsiY5PIcrRvD1DzuY3qYL07NtIQcWnBSY/heikIFQ=="],
 

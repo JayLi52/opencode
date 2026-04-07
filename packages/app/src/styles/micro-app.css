@@ -1,0 +1,14 @@
+.opencode-micro-app {
+  all: initial;
+  font-family: inherit;
+}
+
+.opencode-micro-app * {
+  box-sizing: border-box;
+}
+
+.opencode-micro-app {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}

@@ -1,4 +1,5 @@
 import "@/index.css"
+import { getBasename, isInIcestark } from "@ice/stark-app"
 import { I18nProvider } from "@opencode-ai/ui/context"
 import { DialogProvider } from "@opencode-ai/ui/context/dialog"
 import { FileComponentProvider } from "@opencode-ai/ui/context/file"
@@ -272,6 +273,8 @@ export function AppInterface(props: {
   router?: Component<BaseRouterProps>
   disableHealthCheck?: boolean
 }) {
+  const basename = isInIcestark() ? getBasename() : undefined
+
   return (
     <ServerProvider defaultServer={props.defaultServer} servers={props.servers}>
       <ConnectionGate disableHealthCheck={props.disableHealthCheck}>
@@ -279,6 +282,7 @@ export function AppInterface(props: {
           <GlobalSyncProvider>
             <Dynamic
               component={props.router ?? Router}
+              base={basename}
               root={(routerProps) => <RouterRoot appChildren={props.children}>{routerProps.children}</RouterRoot>}
             >
               <Route path="/" component={HomeRoute} />
