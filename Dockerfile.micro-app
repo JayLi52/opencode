@@ -4,7 +4,7 @@
 # - 构建 wss-server (TypeScript 编译)
 # 最终镜像包含所有组件
 
-FROM registry.cn-shanghai.aliyuncs.com/daofeng/oven-bun:latest AS builder
+FROM --platform=linux/amd64 registry.cn-shanghai.aliyuncs.com/daofeng/oven-bun:latest AS builder
 
 WORKDIR /app
 
@@ -21,9 +21,9 @@ COPY packages/sdk/js/package.json packages/sdk/js/
 COPY packages/ui/package.json packages/ui/
 COPY packages/util/package.json packages/util/
 
-# 安装依赖（bun 会自动解析 workspace 依赖）
-# 先安装根目录的所有依赖，确保 devDependencies 也被安装
-RUN bun install
+# 安装依赖（使用 filter 只安装需要的包及其依赖）
+# 包含：app + bridge + opencode-qwen-acp-demo 及其 workspace 依赖
+RUN bun install --filter @opencode-ai/app --filter @opencode-web-bridge/bridge --filter opencode-qwen-acp-demo
 
 # 复制源代码（只复制需要的包）
 COPY packages/app/ packages/app/
@@ -40,28 +40,26 @@ RUN cd packages/app && \
 # 构建 wss-server (TypeScript -> JavaScript)
 RUN cd packages/opencode-qwen-acp-demo && \
     bun run build
-# 运行时镜像
-FROM node:20-slim
+
+# ==================== 运行时镜像 ====================
+FROM --platform=linux/amd64 registry.cn-shanghai.aliyuncs.com/daofeng/oven-bun:latest
 
 WORKDIR /app
 
 # 安装必要的工具和 qwen-code CLI
-RUN apt-get update && apt-get install -y --no-install-recommends curl && \
-    rm -rf /var/lib/apt/lists/* && \
-    npm install -g @qwen-code/qwen-code http-server tsx || echo "Warning: Some global packages installation failed"
+RUN apk add --no-cache curl && \
+    bun install -g @qwen-code/qwen-code http-server tsx || echo "Warning: Some global packages installation failed"
 
-# 复制构建产物
+# 复制构建产物（只复制编译后的文件，不复制源代码）
 COPY --from=builder /app/packages/app/dist ./app-dist
 
-# 复制 bridge（源码 + 依赖）
+# 复制 bridge（只复制编译后需要的文件和依赖）
 COPY --from=builder /app/packages/bridge/src ./bridge-src
 COPY --from=builder /app/packages/bridge/node_modules ./bridge-node_modules
-COPY --from=builder /app/packages/bridge/package.json ./bridge-package.json
 
-# 复制 wss-server (编译后的 JS 文件 + 依赖)
+# 复制 wss-server（只复制编译后的 JS 文件和依赖）
 COPY --from=builder /app/packages/opencode-qwen-acp-demo/dist ./wss-dist
 COPY --from=builder /app/packages/opencode-qwen-acp-demo/node_modules ./wss-node_modules
-COPY --from=builder /app/packages/opencode-qwen-acp-demo/package.json ./wss-package.json
 
 # 创建工作目录
 RUN mkdir -p /workspace
