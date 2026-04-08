@@ -1,7 +1,7 @@
 # 多阶段构建 Dockerfile
 # - 构建 packages/app 微应用
 # - 构建 packages/bridge
-# - 复制 wss-server
+# - 构建 wss-server (TypeScript 编译)
 # 最终镜像包含所有组件
 
 FROM node:20-slim AS builder
@@ -21,10 +21,10 @@ RUN cd packages/app && \
 # 安装 bridge 依赖
 RUN cd packages/bridge && bun install
 
-# 构建 wss-server
+# 构建 wss-server (TypeScript -> JavaScript)
 RUN cd packages/opencode-qwen-acp-demo && \
-    bun install && \
-    bun run build
+    npm install && \
+    npx tsc
 
 
 # 运行时镜像
@@ -43,9 +43,10 @@ COPY --from=builder /app/packages/bridge/src ./bridge-src
 COPY --from=builder /app/packages/bridge/node_modules ./bridge-node_modules
 COPY --from=builder /app/packages/bridge/package.json ./bridge-package.json
 
-# 复制 wss-server
+# 复制 wss-server (编译后的 JS 文件 + 依赖)
 COPY --from=builder /app/packages/opencode-qwen-acp-demo/dist ./wss-dist
 COPY --from=builder /app/packages/opencode-qwen-acp-demo/node_modules ./wss-node_modules
+COPY --from=builder /app/packages/opencode-qwen-acp-demo/package.json ./wss-package.json
 
 # 创建工作目录
 RUN mkdir -p /workspace
@@ -55,12 +56,13 @@ RUN npm install -g http-server tsx
 
 # 暴露端口
 # 3000: 微应用静态文件服务
-# 4001: wss-server 对外暴露（通过 ingress /ws）
+# 5001: wss-server (WebSocket + HTTP 健康检查)
 # 4096: bridge 对外暴露（通过 ingress /api）
-EXPOSE 3000 4001 4096
+EXPOSE 3000 5001 4096
 
 # 环境变量
 ENV BRIDGE_PORT=4096
+ENV WSS_SERVER_URL=ws://localhost:5001/ws
 ENV WORK_DIR=/workspace
 ENV NODE_ENV=production
 ENV ACP_COMMAND=qwen
@@ -72,19 +74,39 @@ cat > /app/start.sh <<'START_SCRIPT'
 #!/bin/sh
 set -e
 
-# 启动 bridge
-# 使用 tsx 运行 TypeScript 源码
+# 启动 wss-server (端口 5001)
+echo "Starting wss-server on port 5001..."
+cd /app && NODE_PATH=/app/wss-node_modules node wss-dist/wss-server.js > /tmp/wss-server.log 2>&1 &
+WSS_PID=$!
+
+# 等待 wss-server 启动
+sleep 2
+
+# 验证 wss-server 是否启动成功
+if curl -s http://localhost:5001/health > /dev/null 2>&1; then
+  echo "✓ wss-server started successfully"
+else
+  echo "✗ wss-server failed to start, check /tmp/wss-server.log"
+  cat /tmp/wss-server.log
+  exit 1
+fi
+
+# 启动 bridge (连接到 wss-server)
 echo "Starting bridge on port $BRIDGE_PORT..."
 cd /app && NODE_PATH=/app/bridge-node_modules tsx bridge-src/index.ts > /tmp/bridge.log 2>&1 &
 BRIDGE_PID=$!
 
-# 启动 wss-server
-echo "Starting wss-server on port 4001..."
-cd /app && node wss-dist/server.js > /tmp/wss-server.log 2>&1 &
-WSS_PID=$!
-
 # 等待 bridge 启动
 sleep 2
+
+# 验证 bridge 是否启动成功
+if curl -s http://localhost:$BRIDGE_PORT/global/health > /dev/null 2>&1; then
+  echo "✓ bridge started successfully"
+else
+  echo "✗ bridge failed to start, check /tmp/bridge.log"
+  cat /tmp/bridge.log
+  exit 1
+fi
 
 # 启动静态文件服务器（微应用）
 echo "Starting static server on port 3000..."
@@ -98,12 +120,12 @@ http-server app-dist \
 STATIC_PID=$!
 
 echo "All services started:"
+echo "  - WSS Server: http://localhost:5001 (WebSocket: ws://localhost:5001/ws)"
 echo "  - Bridge: http://localhost:$BRIDGE_PORT"
-echo "  - WSS Server: http://localhost:4001/ws"
 echo "  - Static Server: http://localhost:3000"
 
 # 等待所有进程
-wait $BRIDGE_PID $WSS_PID $STATIC_PID
+wait $WSS_PID $BRIDGE_PID $STATIC_PID
 START_SCRIPT
 chmod +x /app/start.sh
 EOF

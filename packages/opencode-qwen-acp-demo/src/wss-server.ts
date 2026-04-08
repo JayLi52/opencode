@@ -16,7 +16,18 @@ import { WebSocketServer, type WebSocket } from "ws"
 import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process"
 import { Readable, Writable } from "node:stream"
 
-const server = http.createServer()
+const server = http.createServer((req, res) => {
+  // 提供简单的健康检查端点
+  if (req.url === "/" || req.url === "/health") {
+    res.writeHead(200, { "Content-Type": "application/json" })
+    res.end(JSON.stringify({ status: "ok", service: "wss-server" }))
+    return
+  }
+  
+  // 其他路径返回 404
+  res.writeHead(404, { "Content-Type": "text/plain" })
+  res.end("Not Found")
+})
 const wss = new WebSocketServer({ server, path: "/ws" })
 
 // 从 URL query 获取连接参数
