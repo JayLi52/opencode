@@ -27,3 +27,6 @@
     }
   }
 }
+.opencode-micro-app > div {
+  height: 100% !important;
+}

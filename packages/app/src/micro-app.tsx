@@ -44,6 +44,15 @@ let shadowRoot: ShadowRoot | null = null
 export function mount(props: { container: Element }) {
   console.log("mount----", props.container)
   
+  // 设置容器的基本样式以确保能够撑开
+  if (props.container instanceof HTMLElement) {
+    props.container.style.width = '100%'
+    props.container.style.height = '100%'
+    props.container.style.display = 'block'
+    props.container.style.position = 'relative'
+    props.container.style.overflow = 'hidden'
+  }
+  
   // 创建 Shadow DOM 以隔离样式
   if (!props.container.shadowRoot) {
     shadowRoot = props.container.attachShadow({ mode: 'open' })
@@ -51,10 +60,61 @@ export function mount(props: { container: Element }) {
     shadowRoot = props.container.shadowRoot
   }
   
+  // 设置 Shadow Root 的宿主元素样式，确保 Shadow DOM 可以正确显示
+  const hostElement = shadowRoot.host as HTMLElement
+  if (hostElement) {
+    hostElement.style.display = 'block'
+    hostElement.style.width = '100%'
+    hostElement.style.height = '100%'
+    hostElement.style.overflow = 'hidden'
+  }
+  
   // 在 Shadow DOM 中创建容器
   const appContainer = document.createElement('div')
   appContainer.classList.add('opencode-micro-app')
+  // 确保容器占满整个 Shadow DOM 空间
+  appContainer.style.width = '100%'
+  appContainer.style.height = '100%'
+  appContainer.style.display = 'block'
+  appContainer.style.position = 'relative'
   shadowRoot.appendChild(appContainer)
+  
+  // 添加基础样式到 Shadow DOM，确保布局正确
+  const styleElement = document.createElement('style')
+  styleElement.textContent = `
+    :host {
+      display: block;
+      width: 100%;
+      height: 100%;
+      position: relative;
+    }
+    
+    .opencode-micro-app {
+      width: 100%;
+      height: 100%;
+      display: block;
+      position: relative;
+      overflow: auto;
+    }
+    
+    * {
+      box-sizing: border-box;
+    }
+    
+    html, body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+    }
+    
+    #root {
+      width: 100%;
+      height: 100%;
+    }
+  `
+  shadowRoot.insertBefore(styleElement, shadowRoot.firstChild)
   
   // 动态加载 CSS 到 Shadow DOM
   const link = document.createElement('link')
