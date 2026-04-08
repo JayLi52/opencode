@@ -70,7 +70,7 @@ echo ""
 # 构建微应用 (微应用模式)
 echo -e "${GREEN}构建微应用 (OpenCode) - UMD 模块格式${NC}"
 cd /Users/terry/work/opencode/packages/app
-BUILD_MODE=micro-app bunx vite build
+BUILD_MODE=micro-app VITE_OPENCODE_SERVER_HOST=localhost VITE_OPENCODE_SERVER_PORT=4096 bunx vite build
 if [ $? -ne 0 ]; then
   echo -e "${RED}✗ 微应用构建失败${NC}"
   exit 1
@@ -81,7 +81,7 @@ echo ""
 # 启动 wss-server (ACP WebSocket 代理)
 echo -e "${GREEN}启动 wss-server (Qwen-ACP) on http://localhost:5001${NC}"
 cd /Users/terry/work/opencode/packages/opencode-qwen-acp-demo
-nohup env PORT=5001 bunx tsx src/wss-server.ts > /tmp/wss-server.log 2>&1 &
+nohup env PORT=5001 bun run src/wss-server.ts > /tmp/wss-server.log 2>&1 &
 WSS_PID=$!
 disown $WSS_PID
 echo "wss-server PID: $WSS_PID"
@@ -97,7 +97,7 @@ echo ""
 # 启动 bridge (连接 wss-server)
 echo -e "${GREEN}启动 bridge on http://localhost:4096${NC}"
 cd /Users/terry/work/opencode/packages/bridge
-nohup env BRIDGE_PORT=4096 WSS_SERVER_URL=ws://localhost:5001/ws bunx tsx src/index.ts > /tmp/bridge.log 2>&1 &
+nohup env BRIDGE_PORT=4096 WSS_SERVER_URL=ws://localhost:5001/ws bun run src/index.ts > /tmp/bridge.log 2>&1 &
 BRIDGE_PID=$!
 disown $BRIDGE_PID
 echo "bridge PID: $BRIDGE_PID"

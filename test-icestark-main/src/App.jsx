@@ -22,8 +22,11 @@ function App() {
           <AppRoute
             name="opencode"
             activePath="/opencode"
-            url={["http://localhost:3000/index.css", "http://localhost:3000/index.js"]}
-            umd
+            url={[
+              "http://localhost:3000/assets/micro-app.css",
+              "http://localhost:3000/index.js"
+            ]}
+            loadScriptMode="import"
           />
         </AppRouter>
       </div>
