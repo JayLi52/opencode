@@ -4,36 +4,48 @@
 # - 构建 wss-server (TypeScript 编译)
 # 最终镜像包含所有组件
 
-FROM node:20-slim AS builder
+FROM oven/bun:latest AS builder
 
 WORKDIR /app
 
-# 安装 bun
-RUN npm install -g bun
+# 复制 package.json 和 lock 文件
+COPY package.json bun.lock ./
+COPY patches/ patches/
 
-# 复制整个项目
-COPY . .
+# 只复制需要的 packages
+COPY packages/app/package.json packages/app/
+COPY packages/bridge/package.json packages/bridge/
+COPY packages/opencode-qwen-acp-demo/package.json packages/opencode-qwen-acp-demo/
+COPY packages/sdk/js/package.json packages/sdk/js/
+COPY packages/ui/package.json packages/ui/
+COPY packages/util/package.json packages/util/
+
+# 安装依赖（bun 会自动解析 workspace）
+RUN bun install
+
+# 复制源代码
+COPY packages/app/ packages/app/
+COPY packages/bridge/ packages/bridge/
+COPY packages/opencode-qwen-acp-demo/ packages/opencode-qwen-acp-demo/
+COPY packages/sdk/js/ packages/sdk/js/
+COPY packages/ui/ packages/ui/
+COPY packages/util/ packages/util/
 
 # 构建 packages/app 微应用
 RUN cd packages/app && \
     BUILD_MODE=micro-app VITE_BASE_PATH=/opencode/app bunx vite build
 
-# 安装 bridge 依赖
-RUN cd packages/bridge && bun install
-
 # 构建 wss-server (TypeScript -> JavaScript)
 RUN cd packages/opencode-qwen-acp-demo && \
-    npm install && \
-    npx tsc
-
-
+    bun run build
 # 运行时镜像
-FROM node:20-alpine
+FROM node:20-slim
 
 WORKDIR /app
 
-# 安装必要的工具
-RUN apk add --no-cache curl
+# 安装必要的工具和 qwen-code CLI
+RUN apk add --no-cache curl && \
+    npm install -g @qwen-code/qwen-code http-server tsx || echo "Warning: Some global packages installation failed"
 
 # 复制构建产物
 COPY --from=builder /app/packages/app/dist ./app-dist
@@ -74,13 +86,29 @@ cat > /app/start.sh <<'START_SCRIPT'
 #!/bin/sh
 set -e
 
+# 检查 qwen 是否可用
+if command -v qwen > /dev/null 2>&1; then
+  echo "✓ qwen CLI found: $(which qwen)"
+else
+  echo "⚠ qwen CLI not found in PATH, trying to use from npm global"
+  # 尝试从 npm global 路径查找
+  QWEN_PATH=$(find /usr/local/lib/node_modules/@qwen-code -name "qwen" -o -name "index.mjs" 2>/dev/null | head -1)
+  if [ -n "$QWEN_PATH" ]; then
+    export ACP_COMMAND=node
+    export ACP_ARGS="$QWEN_PATH --acp"
+    echo "✓ Using qwen from: $QWEN_PATH"
+  else
+    echo "✗ qwen CLI not available, service may fail"
+  fi
+fi
+
 # 启动 wss-server (端口 5001)
 echo "Starting wss-server on port 5001..."
 cd /app && NODE_PATH=/app/wss-node_modules node wss-dist/wss-server.js > /tmp/wss-server.log 2>&1 &
 WSS_PID=$!
 
 # 等待 wss-server 启动
-sleep 2
+sleep 3
 
 # 验证 wss-server 是否启动成功
 if curl -s http://localhost:5001/health > /dev/null 2>&1; then

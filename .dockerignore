@@ -1,0 +1,139 @@
+# Git
+.git
+.gitignore
+
+# Node modules (会在容器内重新安装)
+node_modules
+**/node_modules
+
+# Build outputs
+dist
+**/dist
+build
+**/build
+.next
+.nuxt
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Documentation
+*.md
+docs
+**/docs
+
+# Tests
+test
+**/test
+tests
+**/tests
+__tests__
+**/__tests__
+*.test.*
+*.spec.*
+e2e
+**/e2e
+
+# Config files (keep only necessary ones)
+.eslintrc*
+.prettierrc*
+jest.config.*
+babel.config.*
+
+# CI/CD
+.github
+.gitlab-ci.yml
+.travis.yml
+
+# Misc
+coverage
+.nyc_output
+*.tgz
+.cache
+.temp
+tmp
+**/tmp
+
+# Desktop apps
+packages/desktop
+packages/desktop-electron
+
+# Console
+packages/console
+
+# Docs
+packages/docs
+
+# Enterprise
+packages/enterprise
+
+# Extensions
+packages/extensions
+
+# Function
+packages/function
+
+# Identity
+packages/identity
+
+# Main opencode package (we only need app, bridge, opencode-qwen-acp-demo)
+packages/opencode
+
+# Plugin
+packages/plugin
+
+# Script
+packages/script
+
+# SDK (only need js subfolder)
+packages/sdk/js/node_modules
+
+# Slack
+packages/slack
+
+# Storybook
+packages/storybook
+
+# Web
+packages/web
+
+# Infra
+infra
+
+# Nix
+nix
+
+# Scripts
+script
+
+# Specs
+specs
+
+# Test icestark
+test-icestark-main
+
+# VSCode SDK
+sdks
+
+# Config files
+.editorconfig
+.prettierignore
+bunfig.toml
+flake.lock
+flake.nix
+sst-env.d.ts
+sst.config.ts
+turbo.json

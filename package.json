@@ -21,10 +21,12 @@
   },
   "workspaces": {
     "packages": [
-      "packages/*",
-      "packages/console/*",
+      "packages/app",
+      "packages/bridge",
+      "packages/opencode-qwen-acp-demo",
       "packages/sdk/js",
-      "packages/slack"
+      "packages/ui",
+      "packages/util"
     ],
     "catalog": {
       "@effect/platform-node": "4.0.0-beta.35",
@@ -85,9 +87,6 @@
     "turbo": "2.8.13"
   },
   "dependencies": {
-    "@aws-sdk/client-s3": "3.933.0",
-    "@opencode-ai/plugin": "workspace:*",
-    "@opencode-ai/script": "workspace:*",
     "@opencode-ai/sdk": "workspace:*",
     "typescript": "catalog:"
   },
