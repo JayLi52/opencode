@@ -278,6 +278,9 @@ async function getOrCreateBridge(sessionID: string, directory: string, ws?: WebS
   await bridge.newSession()
   bridges.set(directory, bridge)
 
+  // newSession 完成后模型列表已更新，广播 server.connected 触发前端重新拉取 provider
+  broadcast("global", "server.connected", {})
+
   // 如果用户之前选过 model，恢复选择
   const previousModel = store.getSelectedModel(directory)
   if (previousModel) {
@@ -372,6 +375,8 @@ app.post("/engine/switch", async (c) => {
 
   // 初始化新引擎的 bridge
   await getOrCreateBridge(session.id, dir)
+
+  // getOrCreateBridge 内部已经广播了 server.connected，这里不需要再广播
 
   const sessionData = makeSessionInfo(session)
   broadcast(dir, "session.updated", { info: sessionData })
@@ -1082,8 +1087,11 @@ app.post("/session/:id/prompt_async", async (c) => {
       if (body.model?.modelID && body.model.modelID !== "bridge-agent") {
         const targetModelId = body.model.modelID
         if (targetModelId !== bridge.currentModelId) {
+          console.log(`[bridge] switching model before prompt: ${bridge.currentModelId} → ${targetModelId}`)
           await bridge.setModel(targetModelId)
         }
+      } else {
+        console.log(`[bridge] prompt with model:`, JSON.stringify(body.model), `current:`, bridge.currentModelId)
       }
       await bridge.prompt(text)
       const msg = store.getCurrentAssistantMsg(sessionID)

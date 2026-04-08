@@ -266,12 +266,17 @@ export class OpencodeAcpBridge {
     } as any)
     this.sessionId = res.sessionId
     
+    // DEBUG: 打印完整的 newSession 返回值
+    console.log("[acp-bridge] newSession full response:", JSON.stringify(res, null, 2))
+    
     // 提取 model 信息
     const models = (res as any).models as { currentModelId?: string; availableModels?: Array<{ modelId: string; name?: string }> } | null
     if (models?.currentModelId) {
       this.currentModelId = models.currentModelId
       this.availableModels = models.availableModels ?? []
       console.log("[acp-bridge] ACP session model:", this.currentModelId, "available:", this.availableModels.map(m => m.modelId))
+    } else {
+      console.log("[acp-bridge] no models in newSession response")
     }
     
     console.log("[acp-bridge] ACP session created:", res.sessionId)
