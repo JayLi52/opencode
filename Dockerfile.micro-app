@@ -8,11 +8,12 @@ FROM oven/bun:latest AS builder
 
 WORKDIR /app
 
-# 复制 package.json 和 lock 文件
+# 复制根目录配置文件
 COPY package.json bun.lock ./
 COPY patches/ patches/
 
-# 只复制需要的 packages
+# 只复制需要的 packages 的 package.json（用于依赖解析）
+# 包含：app + bridge + opencode-qwen-acp-demo 及其 workspace 依赖
 COPY packages/app/package.json packages/app/
 COPY packages/bridge/package.json packages/bridge/
 COPY packages/opencode-qwen-acp-demo/package.json packages/opencode-qwen-acp-demo/
@@ -20,10 +21,11 @@ COPY packages/sdk/js/package.json packages/sdk/js/
 COPY packages/ui/package.json packages/ui/
 COPY packages/util/package.json packages/util/
 
-# 安装依赖（bun 会自动解析 workspace）
-RUN bun install
+# 安装依赖（bun 会自动解析 workspace 依赖）
+# 只安装上述 6 个包的依赖，不会安装其他 packages
+RUN bun install --frozen-lockfile
 
-# 复制源代码
+# 复制源代码（只复制需要的包）
 COPY packages/app/ packages/app/
 COPY packages/bridge/ packages/bridge/
 COPY packages/opencode-qwen-acp-demo/ packages/opencode-qwen-acp-demo/
@@ -44,7 +46,8 @@ FROM node:20-slim
 WORKDIR /app
 
 # 安装必要的工具和 qwen-code CLI
-RUN apk add --no-cache curl && \
+RUN apt-get update && apt-get install -y --no-install-recommends curl && \
+    rm -rf /var/lib/apt/lists/* && \
     npm install -g @qwen-code/qwen-code http-server tsx || echo "Warning: Some global packages installation failed"
 
 # 复制构建产物
@@ -62,9 +65,6 @@ COPY --from=builder /app/packages/opencode-qwen-acp-demo/package.json ./wss-pack
 
 # 创建工作目录
 RUN mkdir -p /workspace
-
-# 安装静态文件服务器（http-server）和 tsx（运行 TypeScript）
-RUN npm install -g http-server tsx
 
 # 暴露端口
 # 3000: 微应用静态文件服务
