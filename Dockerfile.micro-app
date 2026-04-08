@@ -4,7 +4,7 @@
 # - 构建 wss-server (TypeScript 编译)
 # 最终镜像包含所有组件
 
-FROM oven/bun:latest AS builder
+FROM registry.cn-shanghai.aliyuncs.com/daofeng/oven-bun:latest AS builder
 
 WORKDIR /app
 
@@ -22,8 +22,8 @@ COPY packages/ui/package.json packages/ui/
 COPY packages/util/package.json packages/util/
 
 # 安装依赖（bun 会自动解析 workspace 依赖）
-# 只安装上述 6 个包的依赖，不会安装其他 packages
-RUN bun install --frozen-lockfile
+# 先安装根目录的所有依赖，确保 devDependencies 也被安装
+RUN bun install
 
 # 复制源代码（只复制需要的包）
 COPY packages/app/ packages/app/
